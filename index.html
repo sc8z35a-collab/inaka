@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><meta name="theme-color" content="#749783"><meta name="description" content="田んぼのあぜ道、木漏れ日、夏の風。里山を自由に散策する、小さな3Dの旅。"><title>里山日和 — 風の向くまま</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&family=Noto+Serif+JP:wght@400;500;600&display=swap" rel="stylesheet"></head>
+<body>
+<main id="world" aria-label="自由に散策できる里山の3D風景"></main>
+<div class="vignette"></div>
+<header class="hud">
+  <a class="brand" href="#" aria-label="里山日和 散策中"><svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><circle cx="25" cy="11" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M3 29 15 14 30 31M18 31l9-12 10 12M3 36h34" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><div><h1>里山日和<span>SATOYAMA BIYORI</span></h1><p>風の向くまま、気の向くまま。</p></div></a>
+  <div class="season"><span class="live-dot"></span> 夏の里山 <span class="season-line"></span><span id="time-label">14:32</span><i data-lucide="sun" class="sun-icon"></i></div>
+  <nav class="actions" aria-label="環境設定"><button id="sound" class="icon-button" aria-label="環境音をオンにする" title="環境音" aria-pressed="false"><i data-lucide="volume-x"></i></button><button id="settings-button" class="icon-button" aria-label="設定を開く" title="設定" aria-expanded="false"><i data-lucide="sliders-horizontal"></i></button><button id="fullscreen" class="icon-button fullscreen-button" aria-label="全画面表示" title="全画面表示"><i data-lucide="maximize"></i></button></nav>
+</header>
+<div class="compass" aria-hidden="true"><span>W</span><span class="compass-tick"></span><span class="north">N</span><span class="compass-tick"></span><span>E</span><div class="compass-needle"></div></div>
+<aside id="settings" class="settings-panel" hidden><div class="panel-heading"><h2>里山の過ごし方</h2><button id="close-settings" aria-label="設定を閉じる"><i data-lucide="x"></i></button></div><label>描画品質<select id="quality"><option value="high">高画質</option><option value="balanced">バランス</option></select></label><label>視点の速さ<input id="sensitivity" aria-label="視点の速さ" type="range" min="0.3" max="1.6" value="0.8" step="0.1"></label><label>環境音<input id="volume" aria-label="環境音の音量" type="range" min="0" max="1" value="0.5" step="0.05"></label><div class="panel-help"><span>スマホ</span>左で移動・右で見渡す<br><span>パソコン</span>WASD / 矢印キー・ドラッグ</div><button id="reset-position" class="reset-button"><i data-lucide="map-pin"></i>はじめのあぜ道へ</button></aside>
+<div id="toast" class="toast" role="status"></div>
+<footer class="bottom-hud">
+ <div class="movement"><div id="joystick" role="group" aria-label="移動スティック"><div class="joystick-ring"></div><span class="joy-mark top"></span><span class="joy-mark right"></span><span class="joy-mark bottom"></span><span class="joy-mark left"></span><div id="joystick-thumb"><i data-lucide="move-up"></i></div></div><span class="control-label">歩く <span class="desktop-key">W A S D</span></span></div>
+ <div class="moment"><div class="moment-heading"><span></span><i data-lucide="sprout"></i><span></span></div><p>何もしない、という贅沢。</p><span class="moment-caption">A LITTLE ESCAPE INTO THE COUNTRYSIDE</span><button id="hide-ui" title="風景だけを表示" aria-label="操作表示を隠す"><i data-lucide="scan"></i> 風景だけを楽しむ</button></div>
+ <div class="look-control"><div id="look-pad" aria-label="ドラッグして見渡す"><svg viewBox="0 0 72 72" fill="none"><path d="M18 26a22 22 0 0 1 36 0M54 46a22 22 0 0 1-36 0" stroke="currentColor" stroke-width="1" opacity=".65"/><path d="m50 22 5 5 3-6M22 50l-5-5-3 6" stroke="currentColor" stroke-width="1" opacity=".65"/><path d="M23 36s5-7 13-7 13 7 13 7-5 7-13 7-13-7-13-7Z" stroke="currentColor" stroke-width="1.2"/><circle cx="36" cy="36" r="3" stroke="currentColor" stroke-width="1.2"/></svg></div><span class="control-label">見渡す <span class="desktop-key">DRAG</span></span></div>
+</footer>
+<button id="show-ui" class="icon-button" aria-label="操作表示を戻す" hidden><i data-lucide="scan"></i></button>
+<div id="loading"><span class="loading-leaf"><i data-lucide="sprout"></i></span><span>里山に、風が吹く。</span><div class="loading-track"><div></div></div></div>
+<script type="module" src="/src/main.js"></script>
+</body></html>
