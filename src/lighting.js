@@ -46,16 +46,23 @@ export class HDRSuperLight {
     this.world = world;
     this.supported = world.renderer.extensions.has('EXT_color_buffer_float');
     this.materials = new Set();
+    this.lastShadowTime = -Infinity;
+    this.shadowPosition = new THREE.Vector3(Infinity, Infinity, Infinity);
+    this.shadowRotation = new THREE.Quaternion();
     this.csm = new CSM({
       camera: world.camera, parent: world.scene, cascades: 4,
       maxFar: 320, mode: 'custom',
-      customSplitsCallback: (_count, _near, far, out) => out.push(16/far, 48/far, 128/far, 1),
+      customSplitsCallback: (count, _near, far, out) => {
+        if (count === 2) out.push(32/far, 1);
+        else out.push(16/far, 48/far, 128/far, 1);
+      },
       shadowMapSize: Math.min(4096, world.renderer.capabilities.maxTextureSize),
       lightDirection: world.sunDirection.clone().negate(),
       lightIntensity: world.sun.intensity, lightNear: 1, lightFar: 650, lightMargin: 240,
       shadowBias: -.000015,
     });
     this.csm.fade = true;
+    this.cascadeLights = [...this.csm.lights];
     // Only cascades illuminate the scene; do not multiply sunlight by five.
     world.sun.removeFromParent(); world.sun.target.removeFromParent();
     world.scene.traverse(object => {
@@ -89,23 +96,51 @@ export class HDRSuperLight {
     this.setQuality('hdr');
   }
   setQuality(value) {
+    this.low = value === 'low';
     this.enabled = value === 'hdr' && this.supported;
+    this.useComposer = (this.enabled || this.low) && this.supported;
+    // Two overlapping cascades retain nearby contact shadows and the full 320 m range.
+    // Reuse the same CSM instance so wind shader hooks and uniforms survive toggles.
+    const count = this.low ? 2 : 4;
+    this.csm.cascades = count;
+    this.csm.lights = this.cascadeLights.slice(0, count);
+    for (const [index, light] of this.cascadeLights.entries()) {
+      if (index < count) this.world.scene.add(light, light.target);
+      else {
+        light.removeFromParent(); light.target.removeFromParent();
+        light.shadow.map?.dispose(); light.shadow.map = null;
+      }
+    }
     const size = Math.min(this.enabled ? 4096 : 2048, this.world.renderer.capabilities.maxTextureSize);
     this.csm.shadowMapSize = size;
     for (const light of this.csm.lights) {
-      if (light.shadow.mapSize.x !== size) {
-        light.shadow.mapSize.set(size, size);
+      const cascadeSize = size;
+      if (light.shadow.mapSize.x !== cascadeSize) {
+        light.shadow.mapSize.set(cascadeSize, cascadeSize);
         light.shadow.map?.dispose(); light.shadow.map = null;
       }
       light.shadow.normalBias = .018;
     }
     for (const material of this.materials) {
+      material.defines.CSM_CASCADES = count;
       if (this.enabled) material.defines.HDR_SUPER_LIGHT = '';
       else delete material.defines.HDR_SUPER_LIGHT;
       material.needsUpdate = true;
     }
-    this.world.renderer.shadowMap.enabled = value !== 'low';
-    this.world.renderer.toneMapping = this.enabled ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;
+    this.world.renderer.shadowMap.enabled = value !== 'balanced';
+    // Keep fog/transparent blending in linear HDR before the common output transform.
+    // Direct-to-canvas AgX changed distant haze: LOW still needs this cheap output pass.
+    if (this.composer) {
+      this.bloom.enabled = this.enabled;
+      for (const target of [this.composer.renderTarget1, this.composer.renderTarget2]) {
+        const samples = this.enabled ? Math.min(4, this.world.renderer.capabilities.maxSamples) : 0;
+        if (target.samples !== samples) { target.dispose(); target.samples = samples; }
+      }
+    }
+    this.world.renderer.toneMapping = this.enabled || this.low ? THREE.AgXToneMapping : THREE.ACESFilmicToneMapping;
+    // Keep physical water/refraction; only its offscreen sampling buffer shrinks.
+    this.world.renderer.transmissionResolutionScale = this.low ? .5 : 1;
+    this.lastShadowTime = -Infinity;
     this.updateFrustums();
     this.syncSun();
   }
@@ -119,6 +154,7 @@ export class HDRSuperLight {
   }
   updateFrustums() {
     this.csm.updateFrustums();
+    this.world.renderer.shadowMap.needsUpdate = true;
     for (const light of this.csm.lights) {
       const camera = light.shadow.camera;
       light.shadow.radius = this.enabled
@@ -129,16 +165,28 @@ export class HDRSuperLight {
   resize(width, height) {
     this.updateFrustums();
     if (this.composer) {
-      this.composer.setPixelRatio(this.world.renderer.getPixelRatio());
-      this.composer.setSize(width, height);
+      // Do not retain full-size HDR buffers while rendering directly.
+      this.composer.setPixelRatio(this.useComposer ? this.world.renderer.getPixelRatio() : 1);
+      this.composer.setSize(this.useComposer ? width : 32, this.useComposer ? height : 32);
     }
   }
   render() {
     const w = this.world;
     w.camera.updateMatrixWorld();
-    this.csm.update();
-    w.renderer.shadowMap.needsUpdate = true; // Animated people, train AND wind, every frame.
-    if (this.enabled) this.composer.render();
+    const now = performance.now();
+    const moved = !this.shadowPosition.equals(w.camera.position) || !this.shadowRotation.equals(w.camera.quaternion);
+    // Never move CSM matrices without redrawing their maps: cached maps would swim.
+    // Camera motion, resize, quality/time changes and texture loads invalidate immediately.
+    // Only stationary LOW views reuse shadows between 30 Hz animation updates.
+    const refresh = !this.low || moved || w.renderer.shadowMap.needsUpdate || now - this.lastShadowTime >= 1000 / 30;
+    if (refresh && w.renderer.shadowMap.enabled) {
+      this.csm.update();
+      w.renderer.shadowMap.needsUpdate = true;
+      this.lastShadowTime = now;
+      this.shadowPosition.copy(w.camera.position);
+      this.shadowRotation.copy(w.camera.quaternion);
+    }
+    if (this.useComposer) this.composer.render();
     else w.renderer.render(w.scene, w.camera);
   }
 }

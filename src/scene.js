@@ -42,7 +42,7 @@ export class Countryside {
     this.renderer.setPixelRatio(devicePixelRatio);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    // HDRSuperLight refreshes animated shadows immediately before each frame.
+    // Lighting refreshes animated shadows at the selected quality cadence.
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -434,18 +434,22 @@ export class Countryside {
   }
   setQuality(value){
     const requested = value === 'ultra' ? 'hdr' : value;
-    this.quality = ['hdr','high','low'].includes(requested) ? requested : 'hdr';
+    this.quality = ['hdr','high','low','balanced'].includes(requested) ? requested : 'hdr';
     if(this.quality === 'hdr' && !this.lighting.supported) {
       this.quality = 'high';
       this.callbacks.onError?.('このブラウザは16bit HDRに非対応のため、高画質で表示します。');
     }
-    this.renderer.setPixelRatio(this.quality==='low' ? Math.min(devicePixelRatio,1) : devicePixelRatio);
     this.lighting.setQuality(this.quality);
     this.resize();
     return this.quality;
   }
   resize(){
     const w=Math.max(1,this.container.clientWidth),h=Math.max(1,this.container.clientHeight);
+    // Keep UI at native resolution; only the 3D drawing buffer is scaled.
+    // Re-evaluate DPR on resize (monitor changes and browser zoom included).
+    const ratio = this.quality === 'low' ? Math.min(devicePixelRatio, 1.5) * .9
+      : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : devicePixelRatio;
+    this.renderer.setPixelRatio(ratio);
     this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
     this.lighting?.resize(w,h);
   }
