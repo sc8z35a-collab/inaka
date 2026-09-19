@@ -9,7 +9,8 @@ let world, toastTimer;
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem('satoyama-immersive') || '{}'); } catch { /* Storage is optional. */ }
 const settings = {
-  quality: saved.quality === 'balanced' ? 'balanced' : 'high',
+  quality: saved.lightingVersion === 1 && ['hdr','high','balanced'].includes(saved.quality) ? saved.quality : 'hdr',
+  lightingVersion: 1,
   sensitivity: Math.max(.3, Math.min(1.6, Number(saved.sensitivity) || .8)),
   volume: Number.isFinite(saved.volume) ? Math.max(0, Math.min(1, saved.volume)) : .5,
 };
@@ -82,9 +83,11 @@ $('#world').addEventListener('pointerdown', () => { if (!$('#settings').hidden) 
 $('#quality').value = settings.quality;
 $('#sensitivity').value = settings.sensitivity;
 $('#volume').value = settings.volume;
-$('#quality').addEventListener('change', e => { settings.quality = e.target.value; world?.setQuality(settings.quality === 'high' ? 'high' : 'low'); persist(); });
+$('#quality').addEventListener('change', e => { settings.quality = e.target.value; const actual=world?.setQuality(settings.quality === 'balanced' ? 'low' : settings.quality); if(actual && actual !== 'low') settings.quality=actual; $('#quality').value=settings.quality; persist(); });
 $('#sensitivity').addEventListener('input', e => { settings.sensitivity = Number(e.target.value); if (world) world.sensitivity = settings.sensitivity; persist(); });
 $('#volume').addEventListener('input', e => { settings.volume = Number(e.target.value); audio.volume(settings.volume); persist(); });
+$('#time-of-day').addEventListener('change',e=>{world?.setTime(e.target.value);$('#time-label').textContent={morning:'07:00',day:'14:32',evening:'17:30'}[e.target.value];});
+$('#viewpoint').addEventListener('change',e=>{world?.goTo(Number(e.target.value),true);setPanel(false);});
 $('#reset-position').addEventListener('click', () => { setPanel(false); world?.goTo(0, true); toast('いつものあぜ道へ。'); });
 $('.brand').addEventListener('click', e => { e.preventDefault(); world?.renderer.domElement.focus({ preventScroll: true }); });
 $('#fullscreen').addEventListener('click', async () => {
@@ -148,7 +151,10 @@ requestAnimationFrame(() => setTimeout(() => {
       },
     });
     world.walking = true; world.sensitivity = settings.sensitivity;
-    if (settings.quality === 'balanced') world.setQuality('low');
+    const actual=world.setQuality(settings.quality === 'balanced' ? 'low' : settings.quality);
+    if(actual !== 'low') settings.quality=actual;
+    $('#quality').value=settings.quality;
+    persist();
     if (import.meta.env.DEV) window.__satoyama = world;
   } catch (error) {
     console.error('Countryside initialization failed:', error);

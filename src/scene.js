@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { Water } from 'three/addons/objects/Water.js';
+import { HDRSuperLight } from './lighting.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { groundHeight, fields, fieldAt, railZ, railHeight, buildLand, fieldWaterGeometry } from './terrain.js';
+import { groundHeight, surfaceHeight, colliderContains, fields, fieldAt, railZ, railHeight, buildLand, fieldWaterGeometry } from './terrain.js';
 import { buildVegetation, buildCumulus } from './nature.js';
 import { VillageLife } from './life.js';
 export { groundHeight } from './terrain.js';
@@ -21,8 +21,8 @@ function noise(x, y) {
 function fbm(x, y) { return noise(x, y) * .55 + noise(x * 2.03, y * 2.03) * .27 + noise(x * 4.07, y * 4.07) * .12 + noise(x * 8.11, y * 8.11) * .06; }
 export const spots = [
   { name: '水田を望む小径', subtitle: '水面に映る空と、稲を渡る風。', position: [13.45, groundHeight(13.45,18)+1.97, 18], look: [-12, 7, -65], map: [82, 94] },
-  { name: '茅葺きの集落', subtitle: '懐かしい屋根の下に流れる、穏やかな時間。', position: [-4, 2.3, -29], look: [-21, 4.3, -58], map: [76, 49] },
-  { name: '杉林の木陰', subtitle: '木漏れ日の中で、深呼吸をひとつ。', position: [57, 2.4, -34], look: [40, 9, -76], map: [141, 47] },
+  { name: '茅葺きの集落', subtitle: '懐かしい屋根の下に流れる、穏やかな時間。', position: [-4, surfaceHeight(-4,-29)+1.7, -29], look: [-21, 4.3, -58], map: [76, 49] },
+  { name: '杉林の木陰', subtitle: '木漏れ日の中で、深呼吸をひとつ。', position: [57, surfaceHeight(57,-34)+1.7, -34], look: [40, 9, -76], map: [141, 47] },
 ];
 
 export class Countryside {
@@ -39,10 +39,10 @@ export class Countryside {
     this.yaw = this.camera.rotation.y;
     this.pitch = this.camera.rotation.x;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.mobile ? 1.4 : 1.7));
+    this.renderer.setPixelRatio(devicePixelRatio);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    // Buildings and trees are static: only recompute shadows after lighting changes.
+    // HDRSuperLight refreshes animated shadows immediately before each frame.
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -59,7 +59,7 @@ export class Countryside {
     this.wind = 1;
     this.elapsed = 0;
     this.timeOfDay = 'day';
-    this.quality = 'high';
+    this.quality = 'hdr';
     this.staticMeshes = [];
     this.colliders = [];
     this.birds = [];
@@ -76,6 +76,8 @@ export class Countryside {
     this.buildClouds();
     this.life = new VillageLife(this);
     this.mergeStaticMeshes();
+    this.lighting = new HDRSuperLight(this);
+    this.setTime('day');
     this.bindControls();
     this.resize();
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -127,7 +129,7 @@ export class Countryside {
     this.materials.glass = new THREE.MeshStandardMaterial({ color: 0x555c48, metalness: .35, roughness: .24 });
   }
   buildLights() {
-    this.hemi = new THREE.HemisphereLight(0xd5e9ff, 0x455b2c, 1.55);
+    this.hemi = new THREE.HemisphereLight(0xd5e9ff, 0x455b2c, .65);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff2d1, 3.5);
     this.sun.position.set(-70, 110, 35);
@@ -142,7 +144,7 @@ export class Countryside {
     this.sky = new Sky(); this.sky.scale.setScalar(1500); this.scene.add(this.sky);
     const u = this.sky.material.uniforms;
     u.turbidity.value = 2.6; u.rayleigh.value = 1.15; u.mieCoefficient.value = .004; u.mieDirectionalG.value = .78;
-    this.sunDirection = new THREE.Vector3(-.45, .74, .3).normalize();
+    this.sunDirection = this.sun.position.clone().sub(this.sun.target.position).normalize();
     u.sunPosition.value.copy(this.sunDirection);
     const generator = new THREE.PMREMGenerator(this.renderer);
     this.environment = generator.fromScene(this.sky, .08, .1, 1600);
@@ -157,14 +159,22 @@ export class Countryside {
   }
   buildTerrain() { buildLand(this); }
   buildWater() {
-    this.water = new Water(fieldWaterGeometry(), {
-      textureWidth: this.mobile ? 256 : 512, textureHeight: this.mobile ? 256 : 512,
-      waterNormals: this.texture('normal',128),sunDirection:this.sunDirection,
-      sunColor:0xfff3dc,waterColor:0x56743d,distortionScale:.17,fog:true,
+    // Every terrace has its own world-space height. A single Water reflector
+    // incorrectly reflected all 20 paddies about y=0. Use physical Fresnel / sky
+    // reflections and shallow refraction instead of that invalid planar mirror.
+    const normal = this.texture('normal', 256); normal.repeat.set(35,35);
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0x687b54, roughness: .17, metalness: 0, ior: 1.333,
+      transmission: .58, thickness: .11, attenuationColor: 0x858554,
+      attenuationDistance: .8, normalMap: normal, normalScale: new THREE.Vector2(.055,.055),
+      clearcoat: 1, clearcoatRoughness: .12, envMapIntensity: 1.1,
     });
-    this.water.rotation.x=-Math.PI/2;this.water.material.uniforms.size.value=3;
+    this.water = new THREE.Mesh(fieldWaterGeometry(), material);
+    this.water.rotation.x = -Math.PI/2;
+    this.water.receiveShadow = true;
     this.scene.add(this.water);
   }
+
   pathX(z) { return 10 + 4.5 * Math.sin(z * .019) + 2 * Math.sin(z * .055); }
   ribbon(points, width, material, height = .22) {
     const vertices = [], uvs = [], indices = [];
@@ -173,7 +183,7 @@ export class Countryside {
       const a = points[Math.max(0, i - 1)], b = points[Math.min(points.length - 1, i + 1)], p = points[i];
       const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
       if (i) distance += Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]);
-      for (const s of [-1, 1]) { const x = p[0] - dz / len * width / 2 * s, z = p[1] + dx / len * width / 2 * s; vertices.push(x, height + Math.max(0, groundHeight(x, z)), z); uvs.push((s + 1) / 2, distance / 4); }
+      for (const s of [-1, 1]) { const x = p[0] - dz / len * width / 2 * s, z = p[1] + dx / len * width / 2 * s; vertices.push(x, height + groundHeight(x, z), z); uvs.push((s + 1) / 2, distance / 4); }
       if (i < points.length - 1) { const j = i * 2; indices.push(j, j + 1, j + 2, j + 1, j + 3, j + 2); }
     }
     const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); geometry.setIndex(indices); geometry.computeVertexNormals();
@@ -198,7 +208,7 @@ export class Countryside {
     const pos = [], uv = [], idx = [];
     for (const face of faces) { const start = pos.length / 3; face.forEach((p, i) => { pos.push(...p); uv.push(i === 0 || i === 3 ? 0 : 1, i < 2 ? 0 : 1); }); idx.push(start,start+1,start+2); if(face.length===4)idx.push(start,start+2,start+3); }
     const geom = new THREE.BufferGeometry(); geom.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));geom.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geom.setIndex(idx);geom.computeVertexNormals();
-    const material = this.materials.roof; material.side = THREE.DoubleSide;
+    const material = this.materials.roof; material.side = THREE.DoubleSide; material.shadowSide = THREE.DoubleSide;
     const roof = new THREE.Mesh(geom,material); roof.castShadow = true; roof.receiveShadow = true; parent.add(roof);this.staticMeshes.push(roof);
     // Thick thatch eaves, bundled ridge and the traditional timber roof fasteners.
     this.addBox(w*2,.48,.35,0,eave-.12,d,this.materials.roof,parent);
@@ -210,7 +220,8 @@ export class Countryside {
   }
   house(x,z,w=11,d=8,rotation=0) {
     const house = new THREE.Group();house.position.set(x,Math.max(groundHeight(x,z),0),z);house.rotation.y=rotation;this.scene.add(house);
-    this.colliders.push({ x,z,r:Math.max(w,d)*.6 });
+    house.name = '民家';
+    this.colliders.push({ x,z,r:Math.hypot(w/2,d/2+1.65),halfWidth:w/2+.35,halfDepth:d/2+1.65,rotation });
     this.addBox(w+.7,.55,d+.65,0,.2,0,this.materials.stone,house);
     this.addBox(w,3.1,d,0,1.9,0,this.materials.plaster,house);
     this.addBox(w,1.35,d+.07,0,1,0,this.materials.wood,house);
@@ -229,12 +240,20 @@ export class Countryside {
     for(let t=-3;t<=3;t++)this.addBox(.055,2.2,.16,t*.19,1.7,d/2+.18,this.materials.wood,house);
     this.addBox(w*.75,.16,1.15,0,.53,d/2+.6,this.materials.wood,house);
     this.addBox(1.8,.25,.65,0,.24,d/2+1.3,this.materials.stone,house);
-    // Dark triangular smoke vent in the upper front of the thatched roof.
+    // The smoke opening and its slats must lie ON the sloping thatch plane.
+    const roofZ = y => d*.69 * (1 - .56 * (y-3.7) / (8.9-3.7)) + .035;
     const triangle = new THREE.BufferGeometry();
-    triangle.setAttribute('position',new THREE.Float32BufferAttribute([-1.6,6.3,d*.47+.6,1.6,6.3,d*.47+.6,0,8.05,d*.47-.4],3));triangle.computeVertexNormals();
-    const vent = new THREE.Mesh(triangle,this.materials.darkWood);house.add(vent);this.staticMeshes.push(vent);
-    for(let s=0;s<6;s++)this.addBox(.07,.66,.08,-.64+s*.26,6.75,d*.47+.4,this.materials.wood,house);
+    triangle.setAttribute('position',new THREE.Float32BufferAttribute([-1.05,6.3,roofZ(6.3),1.05,6.3,roofZ(6.3),0,7.9,roofZ(7.9)],3));
+    triangle.computeVertexNormals();
+    const vent = new THREE.Mesh(triangle,this.materials.darkWood);
+    vent.castShadow = vent.receiveShadow = true;
+    house.add(vent);this.staticMeshes.push(vent);
+    for(let i=-2;i<=2;i++) {
+      const y=6.62, slat=this.addBox(.065,.57,.065,i*.25,y,roofZ(y)+.045,this.materials.wood,house);
+      slat.rotation.x=-Math.atan(d*.69*.56/5.2);
+    }
   }
+
   buildVillage() {
     for(const [x,z,w,d,r] of [[-26,-64,13,9,-.08],[10,-81,10,8,.03],[49,-65,12,8,-.2],[-63,-76,11,9,.12],[82,-83,9,7,-.13],[-88,-51,8,6,.17]])this.house(x,z,w,d,r);
     const y=groundHeight(-46,-57);this.addBox(5,2.1,4,-46,y+1.05,-57,this.materials.wood);
@@ -251,7 +270,7 @@ export class Countryside {
     geom.setIndex([0,1,2,1,3,2,2,3,4,3,5,4,4,5,6]);geom.computeVertexNormals();
     const material=new THREE.MeshStandardMaterial({color:0xe8efb2,side:THREE.DoubleSide,roughness:.86});
     this.windUniform={value:0};this.windStrength={value:1};
-    material.onBeforeCompile=shader=>{
+    const animateRice=shader=>{
       shader.uniforms.uWind=this.windUniform;shader.uniforms.uStrength=this.windStrength;
       shader.vertexShader='uniform float uWind; uniform float uStrength; varying float vHeight;\n'+shader.vertexShader;
       shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
@@ -259,18 +278,25 @@ export class Countryside {
         vec4 root = instanceMatrix * vec4(0.,0.,0.,1.);
         transformed.x += sin(uWind * 1.4 + root.x*.4 + root.z*.18) * position.y * position.y * .15 * uStrength;
         transformed.z += cos(uWind + root.x*.22 + root.z*.24) * position.y * position.y * .08 * uStrength;`);
+    };
+    material.onBeforeCompile=shader=>{
+      animateRice(shader);
       shader.fragmentShader='varying float vHeight;\n'+shader.fragmentShader;
       shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\n diffuseColor.rgb *= mix(vec3(.38,.55,.2), vec3(1.15,1.13,.73), smoothstep(0.,.95,vHeight));');
     };
+    const depthMaterial=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,side:THREE.DoubleSide});
+    depthMaterial.onBeforeCompile=animateRice;
+    depthMaterial.customProgramCacheKey=()=> 'rice-wind-depth-v1';
+    material.shadowSide=THREE.DoubleSide;
     const positions=[];
-    const spacing=this.mobile?.75:.64;
+    const spacing=.64;
     for(const f of fields)for(let z=f.z1+.35;z<f.z2-.35;z+=spacing)for(let x=f.x1+.35;x<f.x2-.35;x+=spacing){
       if(Math.abs(x-this.pathX(z))<2.3)continue;
       const young=f.young;
       if(young&&(Math.round(x/spacing)%2||Math.round(z/spacing)%2))continue;
-      positions.push({x:x+range(-.07,.07),z:z+range(-.07,.07),y:f.y+.12,height:young?range(.28,.42):range(.72,1.02)});
+      positions.push({x:x+range(-.07,.07),z:z+range(-.07,.07),y:f.y+.005,height:young?range(.28,.42):range(.72,1.02)});
     }
-    const perClump=this.mobile?3:4;
+    const perClump=5;
     // Small spatial batches preserve every blade while culling off-screen paddies.
     const tiles = new Map();
     for (const p of positions) {
@@ -289,10 +315,11 @@ export class Countryside {
         dummy.rotation.set(range(-.22,.22), rand() * Math.PI * 2, range(-.26,.26));
         dummy.scale.set(range(1.0,1.7), p.height * range(.8,1.1), 1);
         dummy.updateMatrix(); tile.setMatrixAt(i, dummy.matrix);
-        c.setHSL(range(.195,.245), range(.62,.81), range(.46,.63));
+        c.setHSL(range(.195,.245), range(.46,.64), range(.36,.49));
         tile.setColorAt(i++, c);
       }
-      tile.receiveShadow = true;
+      tile.castShadow = tile.receiveShadow = true;
+      tile.customDepthMaterial = depthMaterial;
       tile.computeBoundingSphere();
       tile.boundingSphere.radius += .5; // Include wind displacement in culling bounds.
       this.rice.add(tile);
@@ -377,12 +404,12 @@ export class Countryside {
   resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;}
   setWalking(value) {
     this.walking=value;this.resetInput();this.callbacks.onWalking?.(value);
-    if(value){this.transition={start:this.camera.position.clone(),end:new THREE.Vector3(this.camera.position.x,groundHeight(this.camera.position.x,this.camera.position.z)+1.96,this.camera.position.z),startYaw:this.yaw,endYaw:this.yaw,startPitch:this.pitch,endPitch:0,elapsed:0,duration:1.5};}
+    if(value){this.transition={start:this.camera.position.clone(),end:new THREE.Vector3(this.camera.position.x,surfaceHeight(this.camera.position.x,this.camera.position.z)+1.7,this.camera.position.z),startYaw:this.yaw,endYaw:this.yaw,startPitch:this.pitch,endPitch:0,elapsed:0,duration:1.5};}
     else this.goTo(0,false);
   }
   goTo(index,walk=this.walking){
     const spot=spots[index],target=new THREE.Vector3().fromArray(spot.position);
-    if(walk)target.y=groundHeight(target.x,target.z)+1.96;
+    if(walk)target.y=surfaceHeight(target.x,target.z)+1.7;
     const dummy=new THREE.PerspectiveCamera();dummy.rotation.order='YXZ';dummy.position.copy(target);dummy.lookAt(...spot.look);
     let endYaw=dummy.rotation.y;while(endYaw-this.yaw>Math.PI)endYaw-=Math.PI*2;while(endYaw-this.yaw<-Math.PI)endYaw+=Math.PI*2;
     this.transition={start:this.camera.position.clone(),end:target,startYaw:this.yaw,endYaw,startPitch:this.pitch,endPitch:dummy.rotation.x,elapsed:0,duration:2};
@@ -390,44 +417,58 @@ export class Countryside {
   }
   setTime(value){
     this.timeOfDay=value;
-    const settings={morning:{sun:[-95,35,-10],color:0xffecd0,intensity:2.8,hemi:1.75,fog:0xc8d9ce,density:.0038,exposure:1.03,sky:2.8},day:{sun:[-70,110,35],color:0xfff2d1,intensity:3.5,hemi:2.1,fog:0xc3d3c2,density:.0025,exposure:1.12,sky:2.6},evening:{sun:[-130,21,30],color:0xffb45e,intensity:3.2,hemi:1.1,fog:0xd9b68e,density:.0032,exposure:1.05,sky:7}}[value];
+    const settings={morning:{sun:[-95,35,-10],color:0xffecd0,intensity:2.8,hemi:.65,fog:0xc8d9ce,density:.0038,exposure:1.03,sky:2.8},day:{sun:[-70,110,35],color:0xfff2d1,intensity:3.5,hemi:.65,fog:0xc3d3c2,density:.0025,exposure:1.12,sky:2.6},evening:{sun:[-130,21,30],color:0xffb45e,intensity:3.2,hemi:.4,fog:0xd9b68e,density:.0032,exposure:1.05,sky:7}}[value];
     this.sun.position.fromArray(settings.sun);this.sun.color.set(settings.color);this.sun.intensity=settings.intensity;this.hemi.intensity=settings.hemi;
     this.hemi.color.set(value==='evening'?0xe3c4a1:0xd8edff);
     this.scene.fog.color.set(settings.fog);this.scene.fog.density=settings.density;
     this.renderer.toneMappingExposure=settings.exposure;
-    this.sunDirection.copy(this.sun.position).normalize();
+    this.sunDirection.copy(this.sun.position).sub(this.sun.target.position).normalize();
     this.sky.material.uniforms.sunPosition.value.copy(this.sunDirection);this.sky.material.uniforms.turbidity.value=settings.sky;
-    this.water.material.uniforms.sunDirection.value.copy(this.sunDirection);this.water.material.uniforms.sunColor.value.set(settings.color);
+    this.lighting?.syncSun();
+    const generator = new THREE.PMREMGenerator(this.renderer);
+    const environment = generator.fromScene(this.sky,.08,.1,1600);
+    this.scene.environment = environment.texture;
+    this.environment?.dispose(); this.environment = environment; generator.dispose();
     this.clouds.forEach(c=>c.material.color.set(value==='evening'?0xffd0a1:0xffffff));
     this.renderer.shadowMap.needsUpdate = true;
   }
   setQuality(value){
-    this.quality=value;
-    const ratio={low:.8,high:this.mobile?1.4:1.7,ultra:2}[value];
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio,ratio));
-    this.renderer.shadowMap.enabled=value!=='low';
-    const size=value==='ultra'?4096:2048;
-    this.sun.shadow.mapSize.set(size,size);
-    if(this.sun.shadow.map){this.sun.shadow.map.dispose();this.sun.shadow.map=null;}
-    this.renderer.shadowMap.needsUpdate = true;
+    const requested = value === 'ultra' ? 'hdr' : value;
+    this.quality = ['hdr','high','low'].includes(requested) ? requested : 'hdr';
+    if(this.quality === 'hdr' && !this.lighting.supported) {
+      this.quality = 'high';
+      this.callbacks.onError?.('このブラウザは16bit HDRに非対応のため、高画質で表示します。');
+    }
+    this.renderer.setPixelRatio(this.quality==='low' ? Math.min(devicePixelRatio,1) : devicePixelRatio);
+    this.lighting.setQuality(this.quality);
     this.resize();
+    return this.quality;
   }
-  resize(){const w=this.container.clientWidth,h=this.container.clientHeight;this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);}
-  screenshot(){this.renderer.render(this.scene,this.camera);return this.renderer.domElement.toDataURL('image/png');}
+  resize(){
+    const w=Math.max(1,this.container.clientWidth),h=Math.max(1,this.container.clientHeight);
+    this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
+    this.lighting?.resize(w,h);
+  }
+  render(){this.lighting.render();}
+  screenshot(){this.render();return this.renderer.domElement.toDataURL('image/png');}
   thumbnails(){
-    const position=this.camera.position.clone(),rotation=this.camera.rotation.clone();const result=[];
-    const width=this.container.clientWidth,height=this.container.clientHeight,ratio=this.renderer.getPixelRatio();
-    this.renderer.setPixelRatio(1);this.renderer.setSize(480,240,false);this.camera.aspect=2;this.camera.updateProjectionMatrix();
-    for(const spot of spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.renderer.render(this.scene,this.camera);result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
-    this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.renderer.setSize(width,height,false);this.camera.aspect=width/height;this.camera.updateProjectionMatrix();return result;
+    const position=this.camera.position.clone(),rotation=this.camera.rotation.clone(),result=[];
+    const ratio=this.renderer.getPixelRatio();
+    try {
+      this.renderer.setPixelRatio(1);this.renderer.setSize(480,240,false);
+      this.camera.aspect=2;this.camera.updateProjectionMatrix();this.lighting.resize(480,240);
+      for(const spot of spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.render();result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
+    } finally {
+      this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.resize();this.render();
+    }
+    return result;
   }
   tick(){
     const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden)return;
     this.elapsed+=dt;
     if(!this.paused)this.life.update(dt);
-    if(Math.floor(this.elapsed*8)!==this.lastShadowTick){this.lastShadowTick=Math.floor(this.elapsed*8);this.renderer.shadowMap.needsUpdate=true;}
     this.windUniform.value=this.elapsed;this.windStrength.value=this.wind;
-    this.water.material.uniforms.time.value+=dt*.32*this.wind;
+    this.water.material.normalMap.offset.set(this.elapsed*.003*this.wind,this.elapsed*.002*this.wind);
     if(this.transition&&!this.paused){
       const t=this.transition;t.elapsed+=dt;const a=smooth(t.elapsed/t.duration);
       this.camera.position.lerpVectors(t.start,t.end,a);this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);
@@ -440,17 +481,17 @@ export class Countryside {
         const speed=this.speed*(this.keys.has('ShiftLeft')||this.keys.has('ShiftRight')?1.8:1)*dt;
         const dx=(-Math.sin(this.yaw)*forward+Math.cos(this.yaw)*side)*speed,dz=(-Math.cos(this.yaw)*forward-Math.sin(this.yaw)*side)*speed;
         const pos=this.camera.position;
-        const allowed=(x,z)=>!this.colliders.some(c=>Math.hypot(x-c.x,z-c.z)<c.r)&&this.life.canEnter(x,z);
+        const allowed=(x,z)=>!this.colliders.some(c=>colliderContains(c,x,z,.25))&&this.life.canEnter(x,z);
         if(allowed(pos.x+dx,pos.z))pos.x=clamp(pos.x+dx,-116,116);
         if(allowed(pos.x,pos.z+dz))pos.z=clamp(pos.z+dz,-106,126);
-        pos.y=THREE.MathUtils.lerp(pos.y,groundHeight(pos.x,pos.z)+1.96+Math.sin(this.elapsed*7)*.023,Math.min(1,dt*10));
+        pos.y=THREE.MathUtils.lerp(pos.y,surfaceHeight(pos.x,pos.z)+1.7+Math.sin(this.elapsed*7)*.023,Math.min(1,dt*10));
       }
     }
     this.camera.rotation.set(this.pitch,this.yaw,0,'YXZ');
     for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=-t;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
     this.clouds.forEach((c,i)=>c.position.x+=dt*.13*(1+i%3));
     if(this.callbacks.onPosition&&Math.floor(this.elapsed*5)!==this.lastMapTick){this.lastMapTick=Math.floor(this.elapsed*5);this.callbacks.onPosition(this.camera.position);}
-    this.renderer.render(this.scene,this.camera);
+    this.render();
     if(!this.ready){this.ready=true;this.callbacks.onReady?.();}
   }
 }
