@@ -10,6 +10,7 @@ export function noise(x, y) {
 }
 export function fbm(x, y) { return noise(x, y) * .56 + noise(x * 2.03, y * 2.03) * .27 + noise(x * 4.07, y * 4.07) * .12 + noise(x * 8.11, y * 8.11) * .05; }
 export const pathX = z => 10 + 4.5 * Math.sin(z * .019) + 2 * Math.sin(z * .055);
+export const roadZ = x => -29 + 1.3 * Math.sin(x * .04);
 export const railZ = x => -39 + .00072 * x * x;
 export const railHeight = x => 4.5 + .002 * x;
 const valley = (x, z) => 1.8 - .025 * z + .0001 * x * x + .8 * noise(x * .026 + 6, z * .021);
@@ -42,6 +43,22 @@ export function groundHeight(x, z) {
   return y;
 }
 
+// Shared rendered walking surface; paths do not clamp negative terrace heights.
+export function surfaceHeight(x,z) {
+  let y=groundHeight(x,z);
+  if(Math.abs(x-pathX(z))<1.375 || Math.abs(z-roadZ(x))<1.65) y+=.24;
+  if(Math.abs(x-pathX(z))<1.5 && z>3.3 && z<6.5) y=Math.max(y,groundHeight(x,z)+.355);
+  if(Math.abs(x-pathX(-39))<2.5 && Math.abs(z-railZ(pathX(-39)))<1.8) y=Math.max(y,railHeight(x)+.06);
+  return y;
+}
+export function colliderContains(c,x,z,padding=0) {
+  if(c.halfWidth) {
+    const dx=x-c.x,dz=z-c.z,cos=Math.cos(c.rotation),sin=Math.sin(c.rotation);
+    return Math.abs(cos*dx-sin*dz)<c.halfWidth+padding && Math.abs(sin*dx+cos*dz)<c.halfDepth+padding;
+  }
+  return Math.hypot(x-c.x,z-c.z)<c.r+padding;
+}
+
 export function buildLand(world) {
   const color = new THREE.Color();
   // High spatial resolution in the playable valley; lower resolution beyond it.
@@ -52,12 +69,12 @@ export function buildLand(world) {
       const x = p.getX(i) + centerX, z = p.getZ(i) + centerZ;
       p.setXYZ(i, x, groundHeight(x, z) - (near ? 0 : .12), z);
       const n = fbm(x * .14, z * .14), f = fieldAt(x, z);
-      color.setHSL(f ? .22 : .245 + n * .025, f ? .49 : .38, f ? .23 : .25 + n * .18);
+      color.setHSL(f ? .105 : .245 + n * .025, f ? .26 : .38, f ? .18 : .25 + n * .18);
       colors.push(color.r, color.g, color.b);
     }
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3)); g.computeVertexNormals();
     const material = world.materials.grass.clone(); material.color.set(0xffffff); material.vertexColors = true;
-    const mesh = new THREE.Mesh(g, material); mesh.receiveShadow = true; world.scene.add(mesh);
+    const mesh = new THREE.Mesh(g, material); mesh.castShadow = mesh.receiveShadow = true; world.scene.add(mesh);
     return mesh;
   };
   world.terrain = addTerrain(290, 290, 0, 0, true);
@@ -79,7 +96,7 @@ export function buildLand(world) {
       matrix.makeTranslation(x, (top + bottom) / 2, f.z2 + 1.05); g.applyMatrix4(matrix); stones.push(g);
     }
   }
-  const retaining = new THREE.Mesh(mergeGeometries(stones), world.materials.stone); retaining.receiveShadow = true;
+  const retaining = new THREE.Mesh(mergeGeometries(stones), world.materials.stone); retaining.castShadow = retaining.receiveShadow = true;
   world.scene.add(retaining); stones.forEach(g => g.dispose());
   // Blue-green distant silhouettes frame the wooded valley.
   for (let layer = 0; layer < 3; layer++) {

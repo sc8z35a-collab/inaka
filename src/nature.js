@@ -70,6 +70,7 @@ export function buildVegetation(world) {
         dummy.position.set(t.x,groundHeight(t.x,t.z)-.15,t.z);dummy.scale.set(t.h*width*t.s,t.h,1);dummy.rotation.set(0,side*Math.PI/2+noise(t.x,t.z)*.8,0);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
         color.setHSL(range(.21,.27),range(.03,.12),range(.72,1));mesh.setColorAt(i++,color);
       }
+      mesh.castShadow=mesh.receiveShadow=true;
       mesh.computeBoundingSphere();world.scene.add(mesh);
     }
   };
@@ -121,7 +122,7 @@ function buildVerge(world){
   }
   const tufts=new THREE.InstancedMesh(geo,material,points.length*2),d=new THREE.Object3D();let n=0;
   for(const p of points)for(let k=0;k<2;k++){d.position.set(p.x,groundHeight(p.x,p.z)+.02,p.z);d.scale.set(range(.6,1.15),range(.38,.84),1);d.rotation.set(0,k*Math.PI/2+random(),0);d.updateMatrix();tufts.setMatrixAt(n++,d.matrix);}
-  tufts.receiveShadow=true;world.scene.add(tufts);
+  tufts.castShadow=tufts.receiveShadow=true;world.scene.add(tufts);
 }
 
 export function buildCumulus(world){

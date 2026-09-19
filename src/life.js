@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { groundHeight, railZ, railHeight, pathX, clamp } from './terrain.js';
+import { groundHeight, surfaceHeight, colliderContains, roadZ, railZ, railHeight, pathX, clamp } from './terrain.js';
 const mat = (color,roughness=.8,metalness=0) => new THREE.MeshStandardMaterial({color,roughness,metalness});
 function box(p,w,h,d,x,y,z,m,r=0){const o=new THREE.Mesh(r?new RoundedBoxGeometry(w,h,d,2,r):new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);o.castShadow=o.receiveShadow=true;p.add(o);return o;}
 function cyl(p,r,h,x,y,z,m){const o=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,12),m);o.position.set(x,y,z);o.castShadow=true;p.add(o);return o;}
@@ -32,12 +32,53 @@ export class VillageLife{
   }
  }
  villagers(){
-  const routes=[[[pathX(40)-.65,40],[pathX(-22)-.65,-22],[pathX(-90)-.65,-90]],[[-75,-29],[10,-29],[60,-29]],[[pathX(8)+.65,8],[pathX(105)+.65,105]],[[-97,-29],[-45,-29],[-31,-49]],[[42,-29],[73,-29],[85,-54]]];
-  routes.forEach((pts,i)=>{const root=new THREE.Group(),shirt=mat([0xcac6b3,0x75988c,0xb0b8c3,0x758265,0xb59b81][i]),pants=mat(0x414d50),skin=mat(0xc69b78),hat=mat(0xc9b78c),shoe=mat(0x373c32);const cap=(p,r,l,y,m)=>{const o=new THREE.Mesh(new THREE.CapsuleGeometry(r,l,3,8),m);o.position.y=y;p.add(o);return o;};cap(root,.175,.3,1.15,shirt).scale.z=.68;cyl(root,.067,.14,0,1.49,0,skin);const head=new THREE.Mesh(new THREE.SphereGeometry(.13,12,10),skin);head.scale.set(.86,1.18,.9);head.position.set(0,1.65,.01);root.add(head);cyl(root,.23,.045,0,1.79,0,hat);cyl(root,.14,.11,0,1.85,0,hat);const limbs=[];
-   for(const s of [-1,1]){const leg=new THREE.Group();leg.position.set(s*.1,.94,0);root.add(leg);cap(leg,.077,.28,-.19,pants);const knee=new THREE.Group();knee.position.y=-.4;leg.add(knee);cap(knee,.059,.29,-.18,pants);box(knee,.14,.09,.25,0,-.4,.055,shoe,.03);const arm=new THREE.Group();arm.position.set(s*.235,1.38,0);root.add(arm);cap(arm,.06,.22,-.15,shirt);cap(arm,.044,.2,-.41,skin);limbs.push({leg,knee,arm,s});}box(root,.24,.28,.11,-.23,1,0,mat(0x88765a),.03);root.traverse(o=>{if(o.isMesh)o.castShadow=o.receiveShadow=true;});this.scene.add(root);const curve=new THREE.CatmullRomCurve3(pts.map(([x,z])=>new THREE.Vector3(x,0,z)),false,'centripetal'),length=curve.getLength();this.npcs.push({root,limbs,curve,length,distance:[.2,.58,.2,.22,.58][i]*length,direction:i%2?-1:1,speed:.65+i*.06,phase:i*1.7});});
+  // Dense samples follow the actual winding roads, not a shortcut spline
+  // between their endpoints (which previously sent villagers into the paddies).
+  const sample=(from,to,point)=>{const count=Math.ceil(Math.abs(to-from)/2);return Array.from({length:count+1},(_,i)=>point(THREE.MathUtils.lerp(from,to,i/count)));};
+  const routes=[
+    // Turn before the house at (10,-81), rather than waiting at its wall forever.
+    sample(40,-68,z=>[pathX(z)-.65,z]),
+    sample(-75,60,x=>[x,roadZ(x)-.55]),
+    sample(8,105,z=>[pathX(z)+.65,z]),
+    sample(-97,-31,x=>[x,roadZ(x)+.55]),
+    sample(42,85,x=>[x,roadZ(x)+.55]),
+  ];
+  routes.forEach((pts,i)=>{const root=new THREE.Group(),shirt=mat([0xcac6b3,0x75988c,0xb0b8c3,0x758265,0xb59b81][i]),pants=mat(0x414d50),skin=mat(0xc69b78),hat=mat(0xc9b78c),shoe=mat(0x373c32);const cap=(p,r,l,y,m)=>{const o=new THREE.Mesh(new THREE.CapsuleGeometry(r,l,3,8),m);o.position.y=y;p.add(o);return o;};cap(root,.175,.3,1.15,shirt).scale.z=.68;cyl(root,.067,.14,0,1.49,0,skin);const head=new THREE.Mesh(new THREE.SphereGeometry(.13,12,10),skin);head.scale.set(.86,1.18,.9);head.position.set(0,1.65,.01);root.add(head);cyl(root,.23,.045,0,1.79,0,hat);cyl(root,.14,.11,0,1.85,0,hat);box(root,.28,.17,.2,0,.94,0,pants,.04);
+   const eye=mat(0x302a24);
+   for(const side of [-1,1]){const e=new THREE.Mesh(new THREE.SphereGeometry(.012,8,6),eye);e.position.set(side*.043,1.67,.117);root.add(e);}
+   const nose=new THREE.Mesh(new THREE.SphereGeometry(.023,8,6),skin);nose.position.set(0,1.63,.125);root.add(nose);
+   const limbs=[];
+   for(const s of [-1,1]){const leg=new THREE.Group();leg.position.set(s*.1,.94,0);root.add(leg);cap(leg,.077,.28,-.19,pants);const knee=new THREE.Group();knee.position.y=-.4;leg.add(knee);cap(knee,.059,.29,-.18,pants);const foot=box(knee,.14,.09,.25,0,-.4,.055,shoe,.03);const arm=new THREE.Group();arm.position.set(s*.235,1.38,0);root.add(arm);cap(arm,.06,.22,-.15,shirt);cap(arm,.044,.2,-.41,skin);cap(arm,.045,.04,-.56,skin);limbs.push({leg,knee,arm,foot,s});}box(root,.24,.28,.11,-.23,1,0,mat(0x88765a),.03);root.traverse(o=>{if(o.isMesh)o.castShadow=o.receiveShadow=true;});this.scene.add(root);const curve=new THREE.CatmullRomCurve3(pts.map(([x,z])=>new THREE.Vector3(x,0,z)),false,'centripetal'),length=curve.getLength();this.npcs.push({root,limbs,curve,length,distance:[.2,.58,.2,.22,.58][i]*length,direction:i%2?-1:1,speed:.65+i*.06,phase:i*1.7,gait:0});});
  }
  canEnter(x,z){if(this.warning&&Math.abs(x-this.cx)<3.2&&Math.abs(z-this.cz)<3.4)return false;if(Math.abs(z-railZ(x))<1.9&&this.cars.some(c=>Math.abs(x-c.group.position.x)<8.6))return false;return !this.npcs.some(n=>Math.hypot(x-n.root.position.x,z-n.root.position.z)<.48);}
  update(dt){this.time+=dt;this.trainX+=dt*this.speed;if(this.trainX>249)this.trainX=-230;for(const car of this.cars){const x=this.trainX-car.offset;car.group.position.set(x,railHeight(x)+.12,railZ(x));car.group.rotation.y=-Math.atan(.00144*x);car.wheels.forEach(w=>w.rotation.y-=dt*this.speed/.38);}this.warning=this.trainX+8>this.cx-55&&this.trainX-24<this.cx+17;this.gateAngle=THREE.MathUtils.lerp(this.gateAngle,this.warning?0:Math.PI/2,Math.min(1,dt*.95));this.gates.forEach(g=>g.rotation.z=-g.userData.side*this.gateAngle);this.lights.forEach(l=>l.lamp.material.emissiveIntensity=this.warning&&Math.floor(this.time*2.6)%2===l.phase?2.7:0);
-  for(const n of this.npcs){let next=n.distance+dt*n.speed*n.direction;if(next>n.length||next<0){n.direction*=-1;next=clamp(next,0,n.length);}const p=n.curve.getPointAt(clamp(next/n.length,0,1));n.waiting=(this.warning&&Math.abs(p.x-this.cx)<3.4&&Math.abs(p.z-this.cz)<5.4)||Math.hypot(p.x-this.world.camera.position.x,p.z-this.world.camera.position.z)<1.25;if(!n.waiting)n.distance=next;const pos=n.curve.getPointAt(n.distance/n.length),t=n.curve.getTangentAt(n.distance/n.length).multiplyScalar(n.direction);n.root.position.set(pos.x,groundHeight(pos.x,pos.z)+.25,pos.z);n.root.rotation.y=Math.atan2(t.x,t.z);const swing=n.waiting?0:Math.sin(this.time*5.5+n.phase)*.4;for(const l of n.limbs){l.leg.rotation.x=swing*l.s;l.knee.rotation.x=Math.max(0,-swing*l.s)*.7;l.arm.rotation.x=-swing*l.s*.7;}}
+  for(const n of this.npcs){
+   let next=n.distance+dt*n.speed*n.direction;
+   if(next>n.length||next<0){n.direction*=-1;next=clamp(next,0,n.length);}
+   const p=n.curve.getPointAt(clamp(next/n.length,0,1));
+   // A pedestrian already on the crossing must exit, not freeze on the rails.
+   const onCrossing=Math.abs(n.root.position.z-this.cz)<3.5;
+   const trainClose=this.cars.some(c=>Math.abs(p.x-c.group.position.x)<8.8)&&Math.abs(p.z-railZ(p.x))<2;
+   n.waiting=(this.warning&&!onCrossing&&Math.abs(p.x-this.cx)<3.4&&Math.abs(p.z-this.cz)<5.4)
+     ||trainClose||Math.hypot(p.x-this.world.camera.position.x,p.z-this.world.camera.position.z)<1.1
+     ||this.world.colliders.some(c=>colliderContains(c,p.x,p.z,.28));
+   if(!n.waiting){n.distance=next;n.phase+=dt*n.speed*7;}
+   n.gait=THREE.MathUtils.damp(n.gait,n.waiting?0:1,12,dt);
+   const pos=n.curve.getPointAt(n.distance/n.length),t=n.curve.getTangentAt(n.distance/n.length).multiplyScalar(n.direction);
+   n.root.position.set(pos.x,surfaceHeight(pos.x,pos.z),pos.z);n.root.rotation.y=Math.atan2(t.x,t.z);
+   const swing=Math.sin(n.phase)*.32*n.gait;
+   for(const l of n.limbs){l.leg.rotation.x=swing*l.s;l.knee.rotation.x=Math.max(0,-swing*l.s)*.7;l.arm.rotation.x=-swing*l.s*.7;}
+   // Ground the lowest sole corner on the rendered path/bridge at every step.
+   // This removes the fixed .25m offset and handles slopes and bent knees.
+   n.root.updateMatrixWorld(true);
+   let correction=-Infinity;
+   const sole=new THREE.Vector3();
+   for(const limb of n.limbs)for(const x of [-.07,.07])for(const z of [-.125,.125]){
+     sole.set(x,-.045,z).applyMatrix4(limb.foot.matrixWorld);
+     correction=Math.max(correction,surfaceHeight(sole.x,sole.z)-sole.y);
+   }
+   n.root.position.y+=correction+.008;
+  }
+
  }
 }
