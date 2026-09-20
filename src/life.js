@@ -28,7 +28,7 @@ export class VillageLife{
    for(const x of [-3.4,3.4]){box(body,1.9,.3,1.65,x,3.94,0,roof,.07);box(body,1.55,.04,1.4,x,4.1,0,frame);}
    for(const s of [-1,1]){for(let j=0;j<8;j++){const x=-5.6+j*1.6;box(body,1.34,1.06,.045,x,2.7,s*1.38,trim,.035);box(body,1.21,.94,.05,x,2.7,s*1.41,glass,.025);box(body,.035,.93,.05,x,2.7,s*1.445,trim);}for(const x of [-6.7,6.7]){box(body,.76,2.05,.055,x,2.08,s*1.425,trim,.02);box(body,.6,1.93,.06,x,2.08,s*1.46,cream,.02);box(body,.44,.86,.068,x,2.68,s*1.5,glass,.02);box(body,.85,.1,.28,x,.91,s*1.43,frame);}}
    for(const end of [-1,1]){box(body,.075,.95,2.15,end*7.72,2.7,0,glass,.03);box(body,.08,1.04,.055,end*7.78,2.7,0,trim);box(body,.3,.22,1.25,end*7.77,1.01,0,frame);box(body,.65,.2,.25,end*7.9,.85,0,frame);for(const s of [-1,1]){const lamp=new THREE.Mesh(new THREE.SphereGeometry(.11,10,8),new THREE.MeshStandardMaterial({color:0xfff9cf,emissive:0xffe5ab,emissiveIntensity:end===1&&n===0?1.4:0}));lamp.position.set(end*7.73,1.88,s*.92);body.add(lamp);}}
-   const wheels=[];for(const x of [-5.2,-3.8,3.8,5.2])for(const s of [-1,1]){const wheel=cyl(group,.38,.18,x,.43,s*.93,frame);wheel.rotation.x=Math.PI/2;wheels.push(wheel);}for(const x of [-4.5,4.5])box(body,2.25,.25,2.15,x,.58,0,frame,.03);merge(body);this.cars.push({group,wheels,offset:n*16.25});
+   const wheels=[];for(const x of [-5.2,-3.8,3.8,5.2])for(const s of [-1,1]){const wheel=cyl(group,.38,.18,x,.39,s*.6,frame);wheel.rotation.x=Math.PI/2;wheels.push(wheel);}for(const x of [-4.5,4.5])box(body,2.25,.25,2.15,x,.58,0,frame,.03);merge(body);this.cars.push({group,wheels,offset:n*16.25});
   }
  }
  villagers(){
@@ -50,7 +50,17 @@ export class VillageLife{
    const limbs=[];
    for(const s of [-1,1]){const leg=new THREE.Group();leg.position.set(s*.1,.94,0);root.add(leg);cap(leg,.077,.28,-.19,pants);const knee=new THREE.Group();knee.position.y=-.4;leg.add(knee);cap(knee,.059,.29,-.18,pants);const foot=box(knee,.14,.09,.25,0,-.4,.055,shoe,.03);const arm=new THREE.Group();arm.position.set(s*.235,1.38,0);root.add(arm);cap(arm,.06,.22,-.15,shirt);cap(arm,.044,.2,-.41,skin);cap(arm,.045,.04,-.56,skin);limbs.push({leg,knee,arm,foot,s});}box(root,.24,.28,.11,-.23,1,0,mat(0x88765a),.03);root.traverse(o=>{if(o.isMesh)o.castShadow=o.receiveShadow=true;});this.scene.add(root);const curve=new THREE.CatmullRomCurve3(pts.map(([x,z])=>new THREE.Vector3(x,0,z)),false,'centripetal'),length=curve.getLength();this.npcs.push({root,limbs,curve,length,distance:[.2,.58,.2,.22,.58][i]*length,direction:i%2?-1:1,speed:.65+i*.06,phase:i*1.7,gait:0});});
  }
- canEnter(x,z){if(this.warning&&Math.abs(x-this.cx)<3.2&&Math.abs(z-this.cz)<3.4)return false;if(Math.abs(z-railZ(x))<1.9&&this.cars.some(c=>Math.abs(x-c.group.position.x)<8.6))return false;return !this.npcs.some(n=>Math.hypot(x-n.root.position.x,z-n.root.position.z)<.48);}
+ canEnter(x,z,from){
+  const inside=(px,pz)=>Math.abs(px-this.cx)<3.2&&Math.abs(pz-this.cz)<3.4;
+  if(this.warning&&inside(x,z)){
+   // Closing barriers must prevent entry, not trap an existing occupant.
+   // Only movement toward the nearest boundary is allowed while inside.
+   const progress=(px,pz)=>Math.max(Math.abs(px-this.cx)/3.2,Math.abs(pz-this.cz)/3.4);
+   if(!from||!inside(from.x,from.z)||progress(x,z)<=progress(from.x,from.z))return false;
+  }
+  if(Math.abs(z-railZ(x))<1.9&&this.cars.some(c=>Math.abs(x-c.group.position.x)<8.6))return false;
+  return !this.npcs.some(n=>Math.hypot(x-n.root.position.x,z-n.root.position.z)<.48);
+ }
  update(dt){this.time+=dt;this.trainX+=dt*this.speed;if(this.trainX>249)this.trainX=-230;for(const car of this.cars){const x=this.trainX-car.offset;car.group.position.set(x,railHeight(x)+.12,railZ(x));car.group.rotation.y=-Math.atan(.00144*x);car.wheels.forEach(w=>w.rotation.y-=dt*this.speed/.38);}this.warning=this.trainX+8>this.cx-55&&this.trainX-24<this.cx+17;this.gateAngle=THREE.MathUtils.lerp(this.gateAngle,this.warning?0:Math.PI/2,Math.min(1,dt*.95));this.gates.forEach(g=>g.rotation.z=-g.userData.side*this.gateAngle);this.lights.forEach(l=>l.lamp.material.emissiveIntensity=this.warning&&Math.floor(this.time*2.6)%2===l.phase?2.7:0);
   for(const n of this.npcs){
    let next=n.distance+dt*n.speed*n.direction;

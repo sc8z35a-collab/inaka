@@ -97,7 +97,7 @@ export class HDRSuperLight {
   }
   setQuality(value) {
     this.low = value === 'low';
-    this.enabled = value === 'hdr' && this.supported;
+    this.enabled = ['ultra', 'hdr'].includes(value) && this.supported;
     this.useComposer = (this.enabled || this.low) && this.supported;
     // Two overlapping cascades retain nearby contact shadows and the full 320 m range.
     // Reuse the same CSM instance so wind shader hooks and uniforms survive toggles.
@@ -133,7 +133,7 @@ export class HDRSuperLight {
     if (this.composer) {
       this.bloom.enabled = this.enabled;
       for (const target of [this.composer.renderTarget1, this.composer.renderTarget2]) {
-        const samples = this.enabled ? Math.min(4, this.world.renderer.capabilities.maxSamples) : 0;
+        const samples = this.enabled ? Math.min(value === 'ultra' ? 2 : 4, this.world.renderer.capabilities.maxSamples) : 0;
         if (target.samples !== samples) { target.dispose(); target.samples = samples; }
       }
     }

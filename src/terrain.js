@@ -45,9 +45,23 @@ export function groundHeight(x, z) {
 
 // Shared rendered walking surface; paths do not clamp negative terrace heights.
 export function surfaceHeight(x,z) {
-  let y=groundHeight(x,z);
-  if(Math.abs(x-pathX(z))<1.375 || Math.abs(z-roadZ(x))<1.65) y+=.24;
-  if(Math.abs(x-pathX(z))<1.5 && z>3.3 && z<6.5) y=Math.max(y,groundHeight(x,z)+.355);
+  const ground=groundHeight(x,z);
+  let offset=0;
+  const pathDistance=Math.abs(x-pathX(z)),roadDistance=Math.abs(z-roadZ(x));
+  // Match both the height and finite footprint of the ribbons in buildPaths.
+  if(z>=-106&&z<=126){
+    if(pathDistance<2.35)offset=Math.max(offset,.14);
+    if(pathDistance<1.375)offset=Math.max(offset,.24);
+  }
+  if(x>=-111&&x<=111){
+    if(roadDistance<2.3)offset=Math.max(offset,.13);
+    if(roadDistance<1.65)offset=Math.max(offset,.24);
+  }
+  for(const f of fields){
+    if(x>=f.x1&&x<=f.x2&&Math.abs(z-(f.z2+1))<.525)offset=Math.max(offset,.12);
+  }
+  let y=ground+offset;
+  if(pathDistance<1.5 && z>3.3 && z<6.5) y=Math.max(y,ground+.355);
   if(Math.abs(x-pathX(-39))<2.5 && Math.abs(z-railZ(pathX(-39)))<1.8) y=Math.max(y,railHeight(x)+.06);
   return y;
 }

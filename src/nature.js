@@ -6,7 +6,7 @@ const range = (a,b) => a + random() * (b-a);
 const canvasTexture = canvas => { const t = new THREE.CanvasTexture(canvas); t.colorSpace = THREE.SRGBColorSpace; return t; };
 
 // Original, alpha-masked botanical atlases: individually shaded leaves, twigs and needles.
-function foliageTexture(wholeTree = false, cedar = false) {
+export function foliageTexture(wholeTree = false, cedar = false) {
   const c = document.createElement('canvas'); c.width = c.height = 512;
   const ctx = c.getContext('2d');
   const leaf = (x,y,size,angle,light) => {
