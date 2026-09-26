@@ -115,7 +115,7 @@ function bench(world, x, z, angle = 0) {
   world.colliders.push({ x, z, halfWidth: 1.4, halfDepth: .4, rotation: angle });
 }
 function buildGround(world) {
-  const landMap = world.materials.grass.map.clone(); landMap.repeat.set(28, 28);
+  const landMap = world.groundTexture("grass", 28);
   const landMaterial = new THREE.MeshStandardMaterial({ map: landMap, color: 0x829459, roughness: 1, vertexColors: true });
   const color = new THREE.Color();
   // Nine one-metre terrain tiles. Distant rings have their centre removed.
