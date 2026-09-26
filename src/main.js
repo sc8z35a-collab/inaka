@@ -148,8 +148,10 @@ requestAnimationFrame(() => setTimeout(() => {
       onPosition: () => {
         if (!world) return;
         const yaw = ((world.yaw * 180 / Math.PI) % 360 + 360) % 360;
-        const direction = ['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'][Math.round(yaw / 45) % 8];
-        $('.north').textContent = direction;
+        const names = ['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'], index = Math.round(yaw / 45) % 8;
+        const [left, center, right] = document.querySelectorAll('.compass > span:not(.compass-tick)');
+        // Side labels previously stayed "W"/"E" even when facing south.
+        center.textContent = names[index]; left.textContent = names[(index + 2) % 8]; right.textContent = names[(index + 6) % 8];
       },
     });
     world.walking = true; world.sensitivity = settings.sensitivity;
