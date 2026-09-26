@@ -28,6 +28,10 @@ try {
   });
   console.log(JSON.stringify(state));
   if (process.env.EVAL) console.log('EVAL:', JSON.stringify(await page.evaluate(process.env.EVAL)));
-  if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
+  if (process.env.SHOT) {
+    // Page screenshots time out while SwiftShader renders continuously: stop the loop and read the canvas.
+    const data = await page.evaluate(() => { const w = window.__satoyama; w.renderer.setAnimationLoop(null); w.render(); return w.renderer.domElement.toDataURL('image/jpeg', .85); });
+    (await import('node:fs')).writeFileSync(process.env.SHOT, Buffer.from(data.split(',')[1], 'base64'));
+  }
 } finally { await browser.close(); }
 for (const l of logs) console.log(l.join(' | '));
