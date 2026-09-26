@@ -55,3 +55,48 @@ body.fullscreen-fallback .hud{justify-content:flex-end}body.fullscreen-fallback 
 }
 @media(max-width:560px) and (max-height:550px){.map-badge,.journey{top:132px}.journey{width:140px}.moment{bottom:155px}.moment p{font-size:13px}}
 @media(max-width:360px){.brand>svg{display:none}.brand h1{font-size:17px}.brand h1 span{font-size:5px}.hud{padding-left:14px;padding-right:14px}.map-badge{left:14px}.journey{right:14px}.moment #hide-ui{font-size:6px}}
+
+/* ===== Landscape-phone-only experience (flagship Android, sideways, fullscreen) ===== */
+.start-gate{position:fixed;inset:0;z-index:30;display:grid;place-items:center;background:radial-gradient(ellipse at 50% 60%,#1d3a2e66,#0f2119d9);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.start-card{text-align:center;color:#fffbea;display:flex;flex-direction:column;align-items:center;gap:10px;animation:enter .5s ease-out}
+.start-eyebrow{font:10px Arial,sans-serif;letter-spacing:.34em;opacity:.7}
+.start-card h2{font-family:var(--serif);font-weight:500;font-size:clamp(22px,5.2vh,34px);letter-spacing:.2em;margin:4px 0 0}
+.start-card p{font-family:var(--serif);font-size:13px;letter-spacing:.12em;margin:0 0 12px;opacity:.85}
+.start-button{display:inline-flex;align-items:center;gap:10px;min-height:52px;padding:0 30px;border-radius:30px;background:#f6f1d6;color:#2f4a38;font-size:15px;letter-spacing:.12em;box-shadow:0 10px 40px #0a1a1266}
+.start-button:hover{background:#fffbe4}.start-button svg{width:18px;height:18px}
+.start-link{min-height:44px;padding:0 18px;font-size:12px;letter-spacing:.1em;opacity:.75;text-decoration:underline;text-underline-offset:4px}
+.gate-open .hud,.gate-open .compass,.gate-open .bottom-hud,.gate-open .journey,.gate-open .map-badge{opacity:0;pointer-events:none}
+.rotate-hint{display:none;position:fixed;inset:0;z-index:40;background:#132a20f2;color:#fffbea;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;font-family:var(--serif);letter-spacing:.14em}
+.rotate-hint p{margin:0;font-size:16px}.rotate-hint strong{font-weight:600;color:#f3e3a1}
+.rotate-hint span{font:9px Arial,sans-serif;letter-spacing:.34em;opacity:.6}
+.rotate-phone{width:46px;height:78px;border:2px solid #fffbea;border-radius:9px;position:relative;animation:rotate-phone 2.4s ease-in-out infinite}
+.rotate-phone:after{content:'';position:absolute;left:50%;bottom:6px;width:10px;height:2px;margin-left:-5px;background:#fffbea;border-radius:2px}
+@keyframes rotate-phone{0%,20%{transform:rotate(0)}50%,80%{transform:rotate(-90deg)}100%{transform:rotate(0)}}
+@media (pointer:coarse) and (orientation:portrait){.rotate-hint{display:flex}}
+
+/* Sideways phones: 330-500 CSS px tall. Honour notches/cut-outs, keep thumbs zones clear,
+   make every control at least 44 px and text at least 9 px. */
+@media (pointer:coarse) and (orientation:landscape) and (max-height:540px){
+  .hud{padding:calc(14px + env(safe-area-inset-top)) calc(18px + env(safe-area-inset-right)) 0 calc(18px + env(safe-area-inset-left))}
+  .brand>svg{width:26px;height:26px}.brand h1{font-size:19px;letter-spacing:.16em}.brand h1 span{font-size:6px;margin-top:6px}
+  .season{top:calc(18px + env(safe-area-inset-top));font-size:10px}
+  .compass{top:calc(46px + env(safe-area-inset-top));font-size:8px}
+  .actions{gap:8px}.icon-button{width:46px;height:46px}
+  .bottom-hud{padding:0 calc(22px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(22px + env(safe-area-inset-left))}
+  #joystick{width:124px;height:124px}#joystick-thumb{left:40px;top:40px;width:44px;height:44px}
+  .joy-mark.top,.joy-mark.bottom{left:60px}.joy-mark.left,.joy-mark.right{top:60px}
+  #look-pad{width:92px;height:92px;margin-bottom:14px}#look-pad svg{width:70px;height:70px}
+  .movement,.look-control{width:132px;gap:8px}.control-label{font-size:9px}.desktop-key{display:none}
+  .moment p{font-size:14px;margin:0 0 4px}
+  #travel-toggle,.moment #hide-ui{min-height:44px;padding:0 16px;font-size:10px;margin-top:6px}
+  .map-badge{left:calc(18px + env(safe-area-inset-left));top:calc(62px + env(safe-area-inset-top));min-height:44px}
+  .journey{right:calc(18px + env(safe-area-inset-right));top:calc(70px + env(safe-area-inset-top))}
+  #minimap-toggle{min-height:44px}
+  .map-spots button{min-width:40px;min-height:40px}
+  .settings-panel{top:calc(10px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));max-height:calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow:auto;width:min(360px,48vw)}
+  .settings-panel label{margin-top:16px;font-size:12px}.settings-panel select{min-height:40px;font-size:12px}
+  .reset-button{min-height:44px;font-size:12px}
+  .leave-fullscreen{min-height:44px}
+  #show-ui{width:48px;height:48px;right:calc(20px + env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom))}
+  .toast{bottom:calc(150px + env(safe-area-inset-bottom));font-size:12px}
+}

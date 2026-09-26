@@ -153,7 +153,8 @@ async function toggleFullscreen() {
     } else {
       const root = document.documentElement, request = root.requestFullscreen || root.webkitRequestFullscreen;
       if (!request) throw new Error('Fullscreen API unavailable');
-      await request.call(root);
+      await request.call(root, { navigationUI: 'hide' });
+      await lockLandscape();
     }
   } catch {
     if (!fullscreenElement()) {
@@ -165,6 +166,19 @@ async function toggleFullscreen() {
     world?.renderer.domElement.focus({ preventScroll: true });
   }
 }
+// The game is played only on phones held sideways: lock the orientation once fullscreen
+// (Android Chrome allows it only in fullscreen / installed PWAs). Failures are harmless.
+async function lockLandscape() {
+  try { await screen.orientation?.lock?.('landscape'); } catch { /* unsupported or not permitted */ }
+}
+const touchDevice = matchMedia('(pointer: coarse)').matches;
+function closeStartGate() { $('#start-gate').hidden = true; document.body.classList.remove('gate-open'); world?.renderer.domElement.focus({ preventScroll: true }); }
+if (touchDevice && !fullscreenElement() && !matchMedia('(display-mode: fullscreen)').matches && !params.has('nogate')) {
+  $('#start-gate').hidden = false; document.body.classList.add('gate-open');
+}
+// Fullscreen requires a user gesture, so the first tap both starts the walk and goes fullscreen.
+$('#start-button').addEventListener('click', async () => { closeStartGate(); if (!fullscreenElement()) await toggleFullscreen(); else await lockLandscape(); });
+$('#start-windowed').addEventListener('click', closeStartGate);
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 $('#leave-fullscreen').addEventListener('click', toggleFullscreen);
 for (const event of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(event, syncFullscreen);
