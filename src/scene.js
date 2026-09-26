@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { groundHeight, surfaceHeight, colliderContains, fields, fieldAt, railZ, railHeight, buildLand, fieldWaterGeometry } from './terrain.js';
 import { buildVegetation, buildCumulus } from './nature.js';
 import { VillageLife } from './life.js';
+import { buildPlains, plainsHeight, plainsSurface, plainsBounds, plainsSpots } from './plains.js';
 export { groundHeight } from './terrain.js';
 
 // Procedural geometry, botanical atlases, and locally served photographic ground textures.
@@ -26,20 +27,29 @@ export const spots = [
 ];
 
 export class Countryside {
-  constructor(container, callbacks = {}) {
+  constructor(container, callbacks = {}, mapId = 'satoyama') {
+    this.mapId = mapId === 'plains' ? 'plains' : 'satoyama';
+    this.isPlains = this.mapId === 'plains';
+    this.groundHeight = this.isPlains ? plainsHeight : groundHeight;
+    this.surfaceHeight = this.isPlains ? plainsSurface : surfaceHeight;
+    this.spots = this.isPlains ? plainsSpots : spots;
+    this.bounds = this.isPlains ? plainsBounds : { minX: -116, maxX: 116, minZ: -106, maxZ: 126 };
     this.container = container;
     this.callbacks = callbacks;
     this.mobile = matchMedia('(max-width: 760px)').matches;
+    this.motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0xb9d3ca, .0018);
     this.camera = new THREE.PerspectiveCamera(this.mobile ? 64 : 59, 1, .15, 1800);
     this.camera.rotation.order = 'YXZ';
-    this.camera.position.fromArray(spots[0].position);
-    this.camera.lookAt(...spots[0].look);
+    this.camera.position.fromArray(this.spots[0].position);
+    this.camera.lookAt(...this.spots[0].look);
     this.yaw = this.camera.rotation.y;
     this.pitch = this.camera.rotation.x;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-    this.renderer.setPixelRatio(devicePixelRatio);
+    // preserveDrawingBuffer forced an extra full-screen copy every frame (costly on tile GPUs);
+    // screenshot()/thumbnails() read the canvas synchronously right after rendering instead.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // Lighting refreshes animated shadows at the selected quality cadence.
@@ -48,14 +58,15 @@ export class Countryside {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.domElement.setAttribute('aria-label', '3Dの田んぼ、茅葺きの家、山々。ドラッグで視点を動かせます。');
+    this.renderer.domElement.setAttribute('aria-label', this.isPlains ? '広大な田園、麦畑と水田、農家と並木道。ドラッグで見渡し、WASDまたはスティックで移動。' : '3Dの田んぼ、茅葺きの家、山々。ドラッグで視点を動かせます。');
     this.renderer.domElement.tabIndex = 0;
     container.append(this.renderer.domElement);
     this.walking = false;
     this.paused = false;
     this.keys = new Set();
     this.joy = { x: 0, y: 0 };
-    this.speed = 4;
+    this.speed = this.isPlains ? 6 : 4;
+    this.travelMode = 'walk';
     this.wind = 1;
     this.elapsed = 0;
     this.timeOfDay = 'day';
@@ -66,15 +77,19 @@ export class Countryside {
     this.materials = {};
     this.buildLights();
     this.buildTextures();
-    this.buildTerrain();
-    this.buildWater();
-    this.buildPaths();
-    this.buildVillage();
-    this.buildForest();
-    this.buildRice();
-    this.buildDetails();
-    this.buildClouds();
-    this.life = new VillageLife(this);
+    if (this.isPlains) {
+      buildPlains(this);
+    } else {
+      this.buildTerrain();
+      this.buildWater();
+      this.buildPaths();
+      this.buildVillage();
+      this.buildForest();
+      this.buildRice();
+      this.buildDetails();
+      this.buildClouds();
+      this.life = new VillageLife(this);
+    }
     this.mergeStaticMeshes();
     this.lighting = new HDRSuperLight(this);
     this.setTime('day');
@@ -82,6 +97,9 @@ export class Countryside {
     this.resize();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
+    // Moving the window to another monitor / zooming changes DPR without resizing the element.
+    const watchRatio=()=>{const query=matchMedia(`(resolution: ${devicePixelRatio}dppx)`);query.addEventListener('change',()=>{this.resize();watchRatio();},{once:true});};
+    watchRatio();
     this.clock = new THREE.Clock();
     this.renderer.setAnimationLoop(() => this.tick());
   }
@@ -107,23 +125,37 @@ export class Countryside {
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
     texture.colorSpace = kind === 'normal' ? THREE.NoColorSpace : THREE.SRGBColorSpace;
-    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    texture.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy());
     return texture;
   }
   buildTextures() {
+    // grass/path canvases were painted (33k strokes each) and immediately replaced by photos.
     for (const kind of ['grass', 'path', 'roof', 'wood', 'plaster', 'leaf']) {
-      const map = this.texture(kind);
+      const map = kind === 'grass' || kind === 'path' ? null : this.texture(kind);
       this.materials[kind] = new THREE.MeshStandardMaterial({ map, roughness: kind === 'leaf' ? .88 : 1, bumpMap: map, bumpScale: kind === 'roof' ? .3 : .1 });
     }
     const loader = new THREE.TextureLoader();
+    this.groundClones = [];
     // Image-search sources: OpenGameArt ground textures and EveryTexture gravel.
     for (const [kind,file] of [['grass','grass.jpg'],['path','gravel.jpg']]) {
-      const map=loader.load(`${import.meta.env.BASE_URL}textures/${file}`,()=>{this.renderer.shadowMap.needsUpdate=true;});
+      const map=loader.load(`${import.meta.env.BASE_URL}textures/${file}`,()=>{
+        // Clones share the image but have their own version; they must be re-uploaded too.
+        for(const clone of this.groundClones)if(clone.source===map.source)clone.needsUpdate=true;
+        this.renderer.shadowMap.needsUpdate=true;
+      });
       map.wrapS=map.wrapT=THREE.RepeatWrapping;map.colorSpace=THREE.SRGBColorSpace;
-      map.anisotropy=Math.min(8,this.renderer.capabilities.getMaxAnisotropy());
+      map.anisotropy=Math.min(16,this.renderer.capabilities.getMaxAnisotropy());
       this.materials[kind].map=map;this.materials[kind].bumpMap=map;this.materials[kind].bumpScale=kind==='path'?.16:.10;
     }
     this.materials.grass.map.repeat.set(75,75);
+    this.groundTexture = (kind, repeat = 1) => {
+      // Texture.clone() flags an upload immediately, which warns while the image is still loading.
+      const map = this.materials[kind].map, clone = new THREE.Texture();
+      clone.source = map.source; clone.wrapS = clone.wrapT = THREE.RepeatWrapping;
+      clone.colorSpace = map.colorSpace; clone.anisotropy = map.anisotropy; clone.repeat.set(repeat, repeat);
+      if (map.image?.complete) clone.needsUpdate = true; else this.groundClones.push(clone);
+      return clone;
+    };
     this.materials.darkWood = new THREE.MeshStandardMaterial({ color: 0x383729, roughness: .97, map: this.materials.wood.map });
     this.materials.stone = new THREE.MeshStandardMaterial({ color: 0x858475, roughness: 1 });
     this.materials.glass = new THREE.MeshStandardMaterial({ color: 0x555c48, metalness: .35, roughness: .24 });
@@ -146,11 +178,9 @@ export class Countryside {
     u.turbidity.value = 2.6; u.rayleigh.value = 1.15; u.mieCoefficient.value = .004; u.mieDirectionalG.value = .78;
     this.sunDirection = this.sun.position.clone().sub(this.sun.target.position).normalize();
     u.sunPosition.value.copy(this.sunDirection);
-    const generator = new THREE.PMREMGenerator(this.renderer);
-    this.environment = generator.fromScene(this.sky, .08, .1, 1600);
-    this.scene.environment = this.environment.texture;
+    // The environment map is generated once by setTime(); generating it here as well
+    // doubled startup PMREM work.
     this.scene.environmentIntensity = .4;
-    generator.dispose();
   }
   addBox(w, h, d, x, y, z, material, parent = this.scene) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -183,7 +213,7 @@ export class Countryside {
       const a = points[Math.max(0, i - 1)], b = points[Math.min(points.length - 1, i + 1)], p = points[i];
       const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
       if (i) distance += Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]);
-      for (const s of [-1, 1]) { const x = p[0] - dz / len * width / 2 * s, z = p[1] + dx / len * width / 2 * s; vertices.push(x, height + groundHeight(x, z), z); uvs.push((s + 1) / 2, distance / 4); }
+      for (const s of [-1, 1]) { const x = p[0] - dz / len * width / 2 * s, z = p[1] + dx / len * width / 2 * s; vertices.push(x, height + this.groundHeight(x, z), z); uvs.push((s + 1) / 2, distance / 4); }
       if (i < points.length - 1) { const j = i * 2; indices.push(j, j + 1, j + 2, j + 1, j + 3, j + 2); }
     }
     const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3)); geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); geometry.setIndex(indices); geometry.computeVertexNormals();
@@ -191,8 +221,10 @@ export class Countryside {
   }
   buildPaths() {
     const path=[],side=[];
-    for(let z=126;z>=-106;z-=1)path.push([this.pathX(z),z]);
-    const verge=new THREE.MeshStandardMaterial({color:0x6f8543,roughness:1,map:this.materials.grass.map});
+    for(let z=126;z>=-75;z-=1)path.push([this.pathX(z),z]);path.push([this.pathX(-75.4),-75.4]);
+    // Ribbon UVs are metric (1 tile / 4 m); the terrain's 75x repeat made verges shimmer.
+    const vergeMap=this.groundTexture('grass');
+    const verge=new THREE.MeshStandardMaterial({color:0x6f8543,roughness:1,map:vergeMap});
     this.ribbon(path,4.7,verge,.14);this.ribbon(path,2.75,this.materials.path,.24);
     const road=this.materials.path.clone();road.color.set(0x96978b);
     for(let x=-111;x<=111;x+=1)side.push([x,-29+1.3*Math.sin(x*.04)]);
@@ -200,7 +232,7 @@ export class Countryside {
     for(const f of fields){
       const bank=[];for(let x=f.x1;x<=f.x2;x+=1)bank.push([x,f.z2+1]);this.ribbon(bank,1.05,verge,.12);
     }
-    for(let i=0;i<13;i++){const z=3.5+i*.23;this.addBox(3,.11,.21,this.pathX(z),groundHeight(this.pathX(z),z)+.30,z,this.materials.wood);}
+    for(let i=0;i<13;i++){const z=3.5+i*.23;this.addBox(3,.11,.21,this.pathX(z),this.groundHeight(this.pathX(z),z)+.30,z,this.materials.wood);}
   }
   roof(w, d, eave, peak, parent) {
     const a = [-w,eave,d], b = [w,eave,d], c = [w,eave,-d], e = [-w,eave,-d], f = [0,peak,d*.44], h = [0,peak,-d*.44];
@@ -219,7 +251,7 @@ export class Countryside {
     for(let z=-d*.42;z<=d*.42;z+=.8)this.addBox(.92,.16,.18,0,peak+.25,z,this.materials.wood,parent);
   }
   house(x,z,w=11,d=8,rotation=0) {
-    const house = new THREE.Group();house.position.set(x,Math.max(groundHeight(x,z),0),z);house.rotation.y=rotation;this.scene.add(house);
+    const house = new THREE.Group();house.position.set(x,Math.max(this.groundHeight(x,z),0),z);house.rotation.y=rotation;this.scene.add(house);
     house.name = '民家';
     this.colliders.push({ x,z,r:Math.hypot(w/2,d/2+1.65),halfWidth:w/2+.35,halfDepth:d/2+1.65,rotation });
     this.addBox(w+.7,.55,d+.65,0,.2,0,this.materials.stone,house);
@@ -256,11 +288,12 @@ export class Countryside {
 
   buildVillage() {
     for(const [x,z,w,d,r] of [[-26,-64,13,9,-.08],[10,-81,10,8,.03],[49,-65,12,8,-.2],[-63,-76,11,9,.12],[82,-83,9,7,-.13],[-88,-51,8,6,.17]])this.house(x,z,w,d,r);
-    const y=groundHeight(-46,-57);this.addBox(5,2.1,4,-46,y+1.05,-57,this.materials.wood);
+    const y=this.groundHeight(-46,-57);this.addBox(5,2.1,4,-46,y+1.05,-57,this.materials.wood);
+    this.colliders.push({ x: -46, z: -57, halfWidth: 2.5, halfDepth: 2, rotation: 0, r: Math.hypot(2.5, 2) });
     const shed=this.addBox(5.8,.22,5,-46,y+2.5,-57,this.materials.darkWood);shed.rotation.z=.11;
     const soil=new THREE.MeshStandardMaterial({color:0x69543c,roughness:1});
-    for(let j=0;j<5;j++){const z=-50+j*1.4;this.addBox(13,.12,.65,-59,groundHeight(-59,z)+.12,z,soil);}
-    for(let x=-67;x<-49;x+=1.5)this.addBox(.12,.9,.12,x,groundHeight(x,-28)+.5,-28,this.materials.wood);
+    for(let j=0;j<5;j++){const z=-50+j*1.4;this.addBox(13,.12,.65,-59,this.groundHeight(-59,z)+.12,z,soil);}
+    for(let x=-67;x<-49;x+=1.5)this.addBox(.12,.9,.12,x,this.groundHeight(x,-28)+.5,-28,this.materials.wood);
   }
   buildForest() { buildVegetation(this); }
   buildRice() {
@@ -330,19 +363,22 @@ export class Countryside {
     const dummy=new THREE.Object3D(),color=new THREE.Color();
     const rocks=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),this.materials.stone,620);
     for(let i=0;i<620;i++){
-      const z=range(-64,127),x=this.pathX(z)+(rand()>.5?1:-1)*range(1.6,2.3);
-      dummy.position.set(x,groundHeight(x,z)+range(.12,.23),z);dummy.scale.set(range(.04,.18),range(.04,.13),range(.05,.19));dummy.rotation.set(rand()*3,rand()*3,rand()*3);dummy.updateMatrix();rocks.setMatrixAt(i,dummy.matrix);color.setHSL(.13,.07,range(.34,.6));rocks.setColorAt(i,color);
+      const z=range(-64,127);let x=this.pathX(z)+(rand()>.5?1:-1)*range(1.6,2.3);
+      if(fieldAt(x,z))x=2*this.pathX(z)-x; // Where the path grazes a paddy, keep stones on the dry verge.
+      dummy.position.set(x,this.groundHeight(x,z)+range(.12,.23),z);dummy.scale.set(range(.04,.18),range(.04,.13),range(.05,.19));dummy.rotation.set(rand()*3,rand()*3,rand()*3);dummy.updateMatrix();rocks.setMatrixAt(i,dummy.matrix);color.setHSL(.13,.07,range(.34,.6));rocks.setColorAt(i,color);
     }rocks.receiveShadow=true;this.scene.add(rocks);
     // Wildflowers and weeds follow the banks, rather than being scattered in the water.
     const blade=new THREE.PlaneGeometry(.07,.55);blade.translate(0,.275,0);
     const weeds=new THREE.InstancedMesh(blade,new THREE.MeshStandardMaterial({color:0x6e8b31,side:THREE.DoubleSide,roughness:1}),8000);
     const flowers=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.045,0),new THREE.MeshStandardMaterial({color:0xf4eed1,roughness:1}),700);
     for(let i=0;i<8000;i++){
-      const z=range(-64,130),x=this.pathX(z)+(rand()>.5?1:-1)*range(1.55,2.34);
-      dummy.position.set(x,groundHeight(x,z)+.17,z);dummy.rotation.set(range(-.4,.4),range(0,6.2),range(-.45,.45));dummy.scale.setScalar(range(.45,1.2));dummy.updateMatrix();weeds.setMatrixAt(i,dummy.matrix);
+      const z=range(-64,126);let x=this.pathX(z)+(rand()>.5?1:-1)*range(1.55,2.34);
+      if(fieldAt(x,z))x=2*this.pathX(z)-x;
+      dummy.position.set(x,this.groundHeight(x,z)+.17,z);dummy.rotation.set(range(-.4,.4),range(0,6.2),range(-.45,.45));dummy.scale.setScalar(range(.45,1.2));dummy.updateMatrix();weeds.setMatrixAt(i,dummy.matrix);
       if(i<700){dummy.position.y+=range(.2,.4);dummy.scale.setScalar(range(.6,1.3));dummy.updateMatrix();flowers.setMatrixAt(i,dummy.matrix);}
     }this.scene.add(weeds,flowers);
-    const by=groundHeight(30,-26);
+    const by=this.groundHeight(30,-26);
+    this.colliders.push({ x: 30, z: -26, halfWidth: 1.3, halfDepth: .37, rotation: 0, r: Math.hypot(1.3, .37) });
     this.addBox(2.6,.13,.7,30,by+.65,-26,this.materials.wood);
     this.addBox(2.6,.35,.1,30,by+1.12,-26.32,this.materials.wood);
     for(const x of [29.1,30.9])this.addBox(.16,.64,.55,x,by+.32,-26,this.materials.darkWood);
@@ -376,40 +412,74 @@ export class Countryside {
   bindControls() {
     const canvas=this.renderer.domElement;let drag=null;
     canvas.addEventListener('pointerdown',e=>{
-      if(this.paused)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);canvas.style.cursor='grabbing';
+      if(this.paused || drag || e.button !== 0)return;
+      canvas.focus({ preventScroll: true });
+      drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);canvas.style.cursor='grabbing';
     });
     canvas.addEventListener('pointermove',e=>{
       if(!drag||drag.id!==e.pointerId||this.paused)return;
-      this.transition=null;
+      this.releaseView();
       this.yaw-=(e.clientX-drag.x)*.003*(this.sensitivity??.8);
       this.pitch=clamp(this.pitch-(e.clientY-drag.y)*.0024*(this.sensitivity??.8),-1.18,1.1);
       drag.x=e.clientX;drag.y=e.clientY;
     });
-    const release=()=>{drag=null;canvas.style.cursor='grab';};
-    canvas.addEventListener('pointerup',release);canvas.addEventListener('pointercancel',release);canvas.style.cursor='grab';
+    // Only the pointer that started the drag may end it (multi-touch safety).
+    const release = event => {
+      if (event && event.pointerId !== drag?.id) return;
+      const id = drag?.id; drag = null; canvas.style.cursor = 'grab';
+      if (id != null && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+    };
+    this.releaseDrag = release;
+    for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(event, release);
+    canvas.style.cursor='grab';
     window.addEventListener('keydown',e=>{
-      if(this.paused||e.target.matches('input,button,a,select,textarea'))return;
+      // Buttons keep focus after a click; movement keys must still walk. Only text-entry
+      // controls (and selects/ranges, which use arrows) keep their own keyboard handling.
+      if(this.paused||e.isComposing||e.target.isContentEditable||e.target.matches?.('input,select,textarea,[contenteditable]'))return;
+      // Browser shortcuts (Ctrl/Cmd+S, Ctrl+D...) are not movement, and their keyup is often lost.
+      if(e.ctrlKey||e.metaKey||e.altKey)return;
+      if(e.target.matches?.('button,a')&&e.code.startsWith('Arrow'))return;
       if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight'].includes(e.code)){
+        this.keys.add(e.code);
+        // Shift alone (sprint modifier, Shift+Tab) must not cancel a viewpoint transition
+        // or scroll-block the page; only real movement keys take over the camera.
+        if(e.code.startsWith('Shift'))return;
         e.preventDefault();
         if (!this.walking) this.setWalking(true);
         this.transition=null;
-        this.keys.add(e.code);
       }
     });
-    window.addEventListener('keyup',e=>this.keys.delete(e.code));
+    window.addEventListener('keyup',e=>{
+      this.keys.delete(e.code);
+      // macOS never sends keyup for keys released while Cmd is held.
+      if(e.key==='Meta')this.keys.clear();
+    });
+    document.addEventListener('focusin', e => {
+      if (e.target.isContentEditable || e.target.closest?.('input,select,textarea')) this.resetInput();
+    });
     window.addEventListener('blur',()=>this.resetInput());
     document.addEventListener('visibilitychange',()=>{if(document.hidden)this.resetInput();});
-    canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.callbacks.onError?.('グラフィックの接続が中断されました。ページを再読み込みしてください。');});
+    canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.contextLost=true;this.callbacks.onContextLost?.();this.callbacks.onError?.('グラフィックの接続が中断されました。軽い描画で復帰を試みます。');});
+    canvas.addEventListener('webglcontextrestored',()=>{
+      this.contextLost=false;
+      // Restored contexts lose every GPU resource; recompile and redraw shadows at a lighter preset.
+      const fallback=this.quality==='hdr'||this.quality==='high'?'low':this.quality;
+      this.callbacks.onContextRestored?.(this.setQuality(fallback));
+      this.renderer.shadowMap.needsUpdate=true;
+    });
   }
-  resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;}
+  // Looking around keeps an in-flight teleport going but stops steering the view.
+  releaseView(){if(this.transition)this.transition.freeLook=true;}
+  resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;this.releaseDrag?.();}
   setWalking(value) {
     this.walking=value;this.resetInput();this.callbacks.onWalking?.(value);
-    if(value){this.transition={start:this.camera.position.clone(),end:new THREE.Vector3(this.camera.position.x,surfaceHeight(this.camera.position.x,this.camera.position.z)+1.7,this.camera.position.z),startYaw:this.yaw,endYaw:this.yaw,startPitch:this.pitch,endPitch:0,elapsed:0,duration:1.5};}
+    if(value){this.transition={start:this.camera.position.clone(),end:new THREE.Vector3(this.camera.position.x,this.surfaceHeight(this.camera.position.x,this.camera.position.z)+1.7,this.camera.position.z),startYaw:this.yaw,endYaw:this.yaw,startPitch:this.pitch,endPitch:0,elapsed:0,duration:1.5};}
     else this.goTo(0,false);
   }
   goTo(index,walk=this.walking){
-    const spot=spots[index],target=new THREE.Vector3().fromArray(spot.position);
-    if(walk)target.y=surfaceHeight(target.x,target.z)+1.7;
+    const spot=this.spots[index]; if (!spot) return;
+    const target=new THREE.Vector3().fromArray(spot.position);
+    if(walk)target.y=this.surfaceHeight(target.x,target.z)+1.7;
     const dummy=new THREE.PerspectiveCamera();dummy.rotation.order='YXZ';dummy.position.copy(target);dummy.lookAt(...spot.look);
     let endYaw=dummy.rotation.y;while(endYaw-this.yaw>Math.PI)endYaw-=Math.PI*2;while(endYaw-this.yaw<-Math.PI)endYaw+=Math.PI*2;
     this.transition={start:this.camera.position.clone(),end:target,startYaw:this.yaw,endYaw,startPitch:this.pitch,endPitch:dummy.rotation.x,elapsed:0,duration:2};
@@ -420,22 +490,24 @@ export class Countryside {
     const settings={morning:{sun:[-95,35,-10],color:0xffecd0,intensity:2.8,hemi:.65,fog:0xc8d9ce,density:.0038,exposure:1.03,sky:2.8},day:{sun:[-70,110,35],color:0xfff2d1,intensity:3.5,hemi:.65,fog:0xc3d3c2,density:.0025,exposure:1.12,sky:2.6},evening:{sun:[-130,21,30],color:0xffb45e,intensity:3.2,hemi:.4,fog:0xd9b68e,density:.0032,exposure:1.05,sky:7}}[value];
     this.sun.position.fromArray(settings.sun);this.sun.color.set(settings.color);this.sun.intensity=settings.intensity;this.hemi.intensity=settings.hemi;
     this.hemi.color.set(value==='evening'?0xe3c4a1:0xd8edff);
-    this.scene.fog.color.set(settings.fog);this.scene.fog.density=settings.density;
+    this.scene.fog.color.set(settings.fog);this.scene.fog.density=this.isPlains ? settings.density * .25 : settings.density;
+    if (this.isPlains && value === 'day') this.scene.fog.color.set(0xb6d7e7);
     this.renderer.toneMappingExposure=settings.exposure;
     this.sunDirection.copy(this.sun.position).sub(this.sun.target.position).normalize();
-    this.sky.material.uniforms.sunPosition.value.copy(this.sunDirection);this.sky.material.uniforms.turbidity.value=settings.sky;
+    this.sky.material.uniforms.sunPosition.value.copy(this.sunDirection);this.sky.material.uniforms.turbidity.value=this.isPlains && value === 'day' ? 1.5 : settings.sky;
+    this.sky.material.uniforms.rayleigh.value=this.isPlains ? 1.65 : 1.15;
     this.lighting?.syncSun();
     const generator = new THREE.PMREMGenerator(this.renderer);
-    const environment = generator.fromScene(this.sky,.08,.1,1600);
+    // sigma .08 exceeded PMREM's 20-tap limit (console warnings, clipped blur).
+    const environment = generator.fromScene(this.sky,.035,.1,1600);
     this.scene.environment = environment.texture;
     this.environment?.dispose(); this.environment = environment; generator.dispose();
     this.clouds.forEach(c=>c.material.color.set(value==='evening'?0xffd0a1:0xffffff));
     this.renderer.shadowMap.needsUpdate = true;
   }
   setQuality(value){
-    const requested = value === 'ultra' ? 'hdr' : value;
-    this.quality = ['hdr','high','low','balanced'].includes(requested) ? requested : 'hdr';
-    if(this.quality === 'hdr' && !this.lighting.supported) {
+    this.quality = ['ultra','hdr','high','low','balanced'].includes(value) ? value : 'hdr';
+    if(['ultra','hdr'].includes(this.quality) && !this.lighting.supported) {
       this.quality = 'high';
       this.callbacks.onError?.('このブラウザは16bit HDRに非対応のため、高画質で表示します。');
     }
@@ -445,15 +517,42 @@ export class Countryside {
   }
   resize(){
     const w=Math.max(1,this.container.clientWidth),h=Math.max(1,this.container.clientHeight);
+    this.mobile = matchMedia('(max-width: 760px)').matches;
+    // Sideways phones are ~2.2:1; a 59-64 deg vertical FOV there becomes a 103-110 deg fisheye.
+    // Keep the horizontal field near 95 deg on ultra-wide screens, 59 deg vertical elsewhere.
+    const aspect = w / h;
+    this.camera.fov = aspect > 1.9 ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(47.5)) / aspect)) : this.mobile ? 64 : 59;
     // Keep UI at native resolution; only the 3D drawing buffer is scaled.
     // Re-evaluate DPR on resize (monitor changes and browser zoom included).
-    const ratio = this.quality === 'low' ? Math.min(devicePixelRatio, 1.5) * .9
-      : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : devicePixelRatio;
+    // ULTRA targets a 4K-class buffer; HDR/high cap DPR at 2 (beyond that the gain is invisible).
+    // The frame governor only trims supersampling above the panel's native DPR, never below it.
+    const ultraRatio = Math.max(devicePixelRatio, 3840 / Math.max(w, h));
+    const requestedRatio = this.quality === 'ultra' ? Math.max(devicePixelRatio, ultraRatio * (this.supersample ?? 1))
+      : this.quality === 'low' ? Math.min(devicePixelRatio, 1.5) * .9
+      : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 2);
+    // Bound allocations by both GPU limits and an 8.3 MP render budget.
+    const gl = this.renderer.getContext();
+    const maxSize = Math.min(this.renderer.capabilities.maxTextureSize, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+    const ratio = Math.min(requestedRatio, maxSize / w, maxSize / h, Math.sqrt(8294400 / (w * h)));
     this.renderer.setPixelRatio(ratio);
     this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
+    this.renderResolution = `${this.renderer.domElement.width} × ${this.renderer.domElement.height}`;
     this.lighting?.resize(w,h);
   }
   render(){this.lighting.render();}
+  // ULTRA on phones: keep ~60 fps by adjusting only the supersampling factor (4K -> native DPR).
+  // Samples wall-clock frame time over 2 s windows; resizes at most every 3 s to avoid churn.
+  governResolution(dt){
+    if(this.quality!=='ultra'||this.paused||!this.ready){this.frameWindow=null;return;}
+    const now=performance.now(),win=this.frameWindow??={start:now,frames:0,changed:now};
+    win.frames++;
+    if(now-win.start<2000)return;
+    const fps=win.frames*1000/(now-win.start);win.start=now;win.frames=0;
+    if(now-win.changed<3000)return;
+    const current=this.supersample??1;
+    const next=fps<50?Math.max(.55,current-.1):fps>58.5&&current<1?Math.min(1,current+.05):current;
+    if(next!==current){this.supersample=next;win.changed=now;this.resize();this.callbacks.onResolution?.(this.renderResolution);}
+  }
   screenshot(){this.render();return this.renderer.domElement.toDataURL('image/png');}
   thumbnails(){
     const position=this.camera.position.clone(),rotation=this.camera.rotation.clone(),result=[];
@@ -461,41 +560,72 @@ export class Countryside {
     try {
       this.renderer.setPixelRatio(1);this.renderer.setSize(480,240,false);
       this.camera.aspect=2;this.camera.updateProjectionMatrix();this.lighting.resize(480,240);
-      for(const spot of spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.render();result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
+      // lookAt() writes rotation in the camera's YXZ order, but render() never re-applied it:
+      // shadows were refreshed for the old viewpoint, so thumbnails showed stale shadows.
+      for(const spot of this.spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.camera.updateMatrixWorld();this.renderer.shadowMap.needsUpdate=true;this.render();result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
     } finally {
-      this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.resize();this.render();
+      this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.resize();this.renderer.shadowMap.needsUpdate=true;this.render();
     }
     return result;
   }
   tick(){
-    const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden)return;
-    this.elapsed+=dt;
-    if(!this.paused)this.life.update(dt);
-    this.windUniform.value=this.elapsed;this.windStrength.value=this.wind;
-    this.water.material.normalMap.offset.set(this.elapsed*.003*this.wind,this.elapsed*.002*this.wind);
+    const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden||this.contextLost)return;
+    // OS reduced-motion changes apply live, without disabling intentional navigation.
+    const animationDt = this.motionPreference.matches || this.paused ? 0 : dt;
+    this.elapsed+=animationDt;
+    if(animationDt > 0)this.life.update(animationDt);
+    this.navigationElapsed = (this.navigationElapsed ?? 0) + dt;
+    this.updateLandscape?.();
+    // Keep shader time small: float32 precision in GLSL makes wind jitter after hours.
+    // 2π·1000 s is a common period of every sin/cos term used by the rice shader.
+    this.windUniform.value=this.elapsed%(Math.PI*2000);this.windStrength.value=this.wind;
+    this.water.material.normalMap.offset.set((this.elapsed*.003*this.wind)%1,(this.elapsed*.002*this.wind)%1);
     if(this.transition&&!this.paused){
-      const t=this.transition;t.elapsed+=dt;const a=smooth(t.elapsed/t.duration);
-      this.camera.position.lerpVectors(t.start,t.end,a);this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);
+      const t=this.transition;t.elapsed+=dt;const a=this.motionPreference.matches ? 1 : smooth(t.elapsed/t.duration);
+      this.camera.position.lerpVectors(t.start,t.end,a);
+      if(!t.freeLook){this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);}
+      if (this.isPlains) this.camera.position.y = Math.max(this.camera.position.y, this.surfaceHeight(this.camera.position.x, this.camera.position.z) + 1.7);
       if(a===1)this.transition=null;
     }else if(this.walking&&!this.paused){
       let forward=(this.keys.has('KeyW')||this.keys.has('ArrowUp')?1:0)-(this.keys.has('KeyS')||this.keys.has('ArrowDown')?1:0)-this.joy.y;
       let side=(this.keys.has('KeyD')||this.keys.has('ArrowRight')?1:0)-(this.keys.has('KeyA')||this.keys.has('ArrowLeft')?1:0)+this.joy.x;
       const len=Math.hypot(forward,side);if(len>1){forward/=len;side/=len;}
       if(len>.01){
-        const speed=this.speed*(this.keys.has('ShiftLeft')||this.keys.has('ShiftRight')?1.8:1)*dt;
+        const speed=this.speed*(this.travelMode === 'cycle' ? 3 : this.keys.has('ShiftLeft')||this.keys.has('ShiftRight')?1.8:1)*dt;
         const dx=(-Math.sin(this.yaw)*forward+Math.cos(this.yaw)*side)*speed,dz=(-Math.cos(this.yaw)*forward-Math.sin(this.yaw)*side)*speed;
         const pos=this.camera.position;
-        const allowed=(x,z)=>!this.colliders.some(c=>colliderContains(c,x,z,.25))&&this.life.canEnter(x,z);
-        if(allowed(pos.x+dx,pos.z))pos.x=clamp(pos.x+dx,-116,116);
-        if(allowed(pos.x,pos.z+dz))pos.z=clamp(pos.z+dz,-106,126);
-        pos.y=THREE.MathUtils.lerp(pos.y,surfaceHeight(pos.x,pos.z)+1.7+Math.sin(this.elapsed*7)*.023,Math.min(1,dt*10));
+        // A player already inside a blocked zone (crossing closed around them, a villager
+        // stepping close) was frozen forever. Blocked zones may always be left.
+        const trapped=!this.life.canEnter(pos.x,pos.z,pos);
+        // Colliders only block entry: an interrupted teleport could leave the camera inside a house.
+        const allowed=(x,z,from)=>!this.colliders.some(c=>colliderContains(c,x,z,.25)&&!colliderContains(c,from.x,from.z,.25))&&(trapped||this.life.canEnter(x,z,from));
+        // Sweep small steps so fast travel cannot skip a thin fence or sign.
+        const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / .18));
+        for (let i = 0; i < steps; i++) {
+          const x = clamp(pos.x + dx / steps, this.bounds.minX, this.bounds.maxX);
+          const z = clamp(pos.z + dz / steps, this.bounds.minZ, this.bounds.maxZ);
+          if (allowed(x, pos.z, pos)) pos.x = x;
+          if (allowed(pos.x, z, pos)) pos.z = z;
+        }
+        const bob = this.motionPreference.matches ? 0 : Math.sin(this.elapsed*7)*.023;
+        pos.y=THREE.MathUtils.lerp(pos.y,this.surfaceHeight(pos.x,pos.z)+1.7+bob,Math.min(1,dt*10));
       }
     }
+    // Trains used to pass straight through a player standing on the rails.
+    if(!this.transition)this.life.clearTrack?.(this.camera.position,dt);
     this.camera.rotation.set(this.pitch,this.yaw,0,'YXZ');
-    for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=-t;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
-    this.clouds.forEach((c,i)=>c.position.x+=dt*.13*(1+i%3));
-    if(this.callbacks.onPosition&&Math.floor(this.elapsed*5)!==this.lastMapTick){this.lastMapTick=Math.floor(this.elapsed*5);this.callbacks.onPosition(this.camera.position);}
+    if(animationDt > 0 || !this.ready)for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=Math.atan2(Math.cos(t)*d.radius,-Math.sin(t)*d.radius*.5)+Math.PI;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
+    this.clouds.forEach((c,i)=>{
+      c.position.x += animationDt*.13*(1+i%3);
+      const limit = this.isPlains ? 1350 : 900;
+      if(c.position.x > limit)c.position.x = ((c.position.x + limit) % (limit * 2)) - limit;
+    });
+    // Heading must still update while reduced motion freezes the scenery clock.
+    if(this.callbacks.onPosition&&(this.lastYaw !== this.yaw || Math.floor(this.navigationElapsed*5)!==this.lastMapTick)){
+      this.lastYaw=this.yaw;this.lastMapTick=Math.floor(this.navigationElapsed*5);this.callbacks.onPosition(this.camera.position);
+    }
     this.render();
+    this.governResolution(dt);
     if(!this.ready){this.ready=true;this.callbacks.onReady?.();}
   }
 }

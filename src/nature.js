@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import { groundHeight, fieldAt, pathX, railZ, noise } from './terrain.js';
+import { groundHeight, fieldAt, pathX, railZ, noise, onPath } from './terrain.js';
 let seed = 87423;
 const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 const range = (a,b) => a + random() * (b-a);
 const canvasTexture = canvas => { const t = new THREE.CanvasTexture(canvas); t.colorSpace = THREE.SRGBColorSpace; return t; };
 
 // Original, alpha-masked botanical atlases: individually shaded leaves, twigs and needles.
-function foliageTexture(wholeTree = false, cedar = false) {
+export function foliageTexture(wholeTree = false, cedar = false) {
   const c = document.createElement('canvas'); c.width = c.height = 512;
   const ctx = c.getContext('2d');
   const leaf = (x,y,size,angle,light) => {
@@ -76,7 +76,10 @@ export function buildVegetation(world) {
   };
   instantiate(trees,broadMat,.91);instantiate(cedars,cedarMat,.52);
   const leafMat=new THREE.MeshLambertMaterial({map:foliageTexture(),alphaTest:.4,side:THREE.DoubleSide,color:0xc7d3a7});
-  const closeTrees=[[-16,19,15],[-37,-56,12],[-46,-69,15],[31,-69,11],[66,-62,12],[-83,-38,13],[45,27,14],[101,13,13],[-108,55,16],[72,-89,15],[-10,-84,12],[-86,-86,15]];
+  // Three of these grew in the middle of flooded paddies (rice planted through the trunks)
+  // and one stood 4 m from the rails, so trains drove through its crown. They now stand on
+  // the levees between terraces and beside the embankment.
+  const closeTrees=[[-16,32,15],[-37,-56,12],[-46,-69,15],[31,-69,11],[66,-62,12],[-86,-44,13],[45,31.5,14],[111,13,13],[-108,55,16],[72,-89,15],[-10,-84,12],[-86,-86,15]];
   const cards=new THREE.InstancedMesh(new THREE.PlaneGeometry(1,1),leafMat,closeTrees.length*64);let index=0;
   const branchGeometries=[];
   function branch(a,b,r1,r2){const dir=new THREE.Vector3().subVectors(b,a);const g=new THREE.CylinderGeometry(r2,r1,dir.length(),7,1);const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dir.normalize());g.applyQuaternion(q);g.translate((a.x+b.x)/2,(a.y+b.y)/2,(a.z+b.z)/2);branchGeometries.push(g);}
@@ -116,7 +119,7 @@ function buildVerge(world){
   for(let i=0;i<9000;i++){
     let x=range(-115,115),z=range(-86,121);
     if(i<3300){z=range(-85,121);x=pathX(z)+(random()>.5?1:-1)*range(1.48,2.8);}
-    if(fieldAt(x,z,-.5)||Math.abs(x-pathX(z))<1.4||Math.abs(z-railZ(x))<2.5||Math.abs(z+29-1.3*Math.sin(x*.04))<1.5)continue;
+    if(fieldAt(x,z,-.5)||onPath(x,z,1.4)||Math.abs(z-railZ(x))<2.5||Math.abs(z+29-1.3*Math.sin(x*.04))<1.5)continue;
     if(world.colliders.some(t=>Math.hypot(x-t.x,z-t.z)<t.r))continue;
     points.push({x,z});
   }

@@ -1,0 +1,12 @@
+{
+  "name": "里山日和 — 風の向くまま",
+  "short_name": "里山日和",
+  "description": "田園を自由に散策する3Dの旅。横向き・全画面専用。",
+  "start_url": "./?map=plains",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#1d3a2e",
+  "theme_color": "#1d3a2e",
+  "lang": "ja"
+}
