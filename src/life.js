@@ -65,10 +65,17 @@ export class VillageLife{
    if(next>n.length||next<0){n.direction*=-1;next=clamp(next,0,n.length);}
    const p=n.curve.getPointAt(clamp(next/n.length,0,1));
    // A pedestrian already on the crossing must exit, not freeze on the rails.
-   const onCrossing=Math.abs(n.root.position.z-this.cz)<3.5;
-   const trainClose=this.cars.some(c=>Math.abs(p.x-c.group.position.x)<8.8)&&Math.abs(p.z-railZ(p.x))<2;
+   // Previously only z was compared, so anyone in that z band anywhere on the map
+   // counted as "on the crossing" and ignored the warning.
+   const here=n.root.position,onCrossing=Math.abs(here.z-this.cz)<3.5&&Math.abs(here.x-this.cx)<3.4;
+   // Someone already between the rails must keep walking off them, never freeze there.
+   const onRails=Math.abs(here.z-railZ(here.x))<2;
+   const trainClose=!onRails&&this.cars.some(c=>Math.abs(p.x-c.group.position.x)<8.8)&&Math.abs(p.z-railZ(p.x))<2;
+   // Villagers walked straight through each other.
+   const crowded=this.npcs.some(o=>o!==n&&Math.hypot(p.x-o.root.position.x,p.z-o.root.position.z)<.55
+     &&Math.hypot(p.x-o.root.position.x,p.z-o.root.position.z)<Math.hypot(here.x-o.root.position.x,here.z-o.root.position.z));
    n.waiting=(this.warning&&!onCrossing&&Math.abs(p.x-this.cx)<3.4&&Math.abs(p.z-this.cz)<5.4)
-     ||trainClose||Math.hypot(p.x-this.world.camera.position.x,p.z-this.world.camera.position.z)<1.1
+     ||trainClose||crowded||Math.hypot(p.x-this.world.camera.position.x,p.z-this.world.camera.position.z)<1.1
      ||this.world.colliders.some(c=>colliderContains(c,p.x,p.z,.28));
    if(!n.waiting){n.distance=next;n.phase+=dt*n.speed*7;}
    n.gait=THREE.MathUtils.damp(n.gait,n.waiting?0:1,12,dt);
