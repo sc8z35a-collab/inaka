@@ -1,9 +1,9 @@
 import './style.css';
-import { createIcons, VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sprout, MoveUp, X, MapPin, Scan } from 'lucide';
+import { createIcons, VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan } from 'lucide';
 import { Countryside } from './scene.js';
 
 const $ = selector => document.querySelector(selector);
-const icons = () => createIcons({ icons: { VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sprout, MoveUp, X, MapPin, Scan } });
+const icons = () => createIcons({ icons: { VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan } });
 icons();
 let world, toastTimer;
 let saved = {};
@@ -13,6 +13,7 @@ const settings = {
   lightingVersion: 1,
   sensitivity: Math.max(.3, Math.min(1.6, Number(saved.sensitivity) || .8)),
   volume: Number.isFinite(saved.volume) ? Math.max(0, Math.min(1, saved.volume)) : .5,
+  time: ['morning', 'day', 'evening'].includes(saved.time) ? saved.time : 'day',
 };
 const persist = () => { try { localStorage.setItem('satoyama-immersive', JSON.stringify(settings)); } catch { /* Private mode. */ } };
 function toast(message) {
@@ -95,7 +96,15 @@ $('#volume').value = settings.volume;
 $('#quality').addEventListener('change', e => { settings.quality = e.target.value; const actual=world?.setQuality(settings.quality); if(actual) settings.quality=actual; $('#quality').value=settings.quality; persist(); });
 $('#sensitivity').addEventListener('input', e => { settings.sensitivity = Number(e.target.value); if (world) world.sensitivity = settings.sensitivity; persist(); });
 $('#volume').addEventListener('input', e => { settings.volume = Number(e.target.value); audio.volume(settings.volume); persist(); });
-$('#time-of-day').addEventListener('change',e=>{world?.setTime(e.target.value);$('#time-label').textContent={morning:'07:00',day:'14:32',evening:'17:30'}[e.target.value];});
+function applyTime(value) {
+  world?.setTime(value);
+  $('#time-label').textContent = { morning: '07:00', day: '14:32', evening: '17:30' }[value];
+  // The HUD always showed a midday sun, even at dawn or dusk.
+  const icon = document.querySelector('.sun-icon');
+  icon.outerHTML = `<i data-lucide="${{ morning: 'sunrise', day: 'sun', evening: 'sunset' }[value]}" class="sun-icon"></i>`;
+  icons();
+}
+$('#time-of-day').addEventListener('change', e => { applyTime(e.target.value); settings.time = e.target.value; persist(); });
 $('#viewpoint').addEventListener('change',e=>{
   world?.goTo(Number(e.target.value),true);setPanel(false);
   toast(`${e.target.selectedOptions[0].textContent}へ。`);
@@ -174,6 +183,8 @@ requestAnimationFrame(() => setTimeout(() => {
       },
     });
     world.walking = true; world.sensitivity = settings.sensitivity;
+    $('#time-of-day').value = settings.time;
+    if (settings.time !== 'day') applyTime(settings.time);
     const actual=world.setQuality(settings.quality);
     settings.quality=actual;
     $('#quality').value=settings.quality;
