@@ -90,9 +90,9 @@ try {
       const x = w.life.cars[0].group.position.x + 3, z = -39 + .00072 * x * x;
       w.camera.position.set(x, 6, z);
       await new Promise(r => setTimeout(r, 1500));
-      const p = w.camera.position; return Math.abs(p.z - (-39 + .00072 * p.x * p.x));
+      const p = w.camera.position; return [Math.abs(p.z - (-39 + .00072 * p.x * p.x)), x, z, p.x, p.z, w.paused, !!w.transition, document.hidden, w.elapsed];
     });
-    assert.ok(r > 1.8, `distance from rail centre ${r}`);
+    assert.ok(r[0] > 1.8, `distance from rail centre ${JSON.stringify(r)}`);
   });
 } finally { await browser.close(); }
 console.log(results.join('\n'));

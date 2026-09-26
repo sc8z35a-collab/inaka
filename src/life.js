@@ -54,7 +54,8 @@ export class VillageLife{
  canEnter(x,z){if(this.warning&&Math.abs(x-this.cx)<3.2&&Math.abs(z-this.cz)<3.4)return false;if(Math.abs(z-railZ(x))<1.9&&this.cars.some(c=>Math.abs(x-c.group.position.x)<8.6))return false;return !this.npcs.some(n=>Math.hypot(x-n.root.position.x,z-n.root.position.z)<.48);}
  clearTrack(pos,dt){
   const offset=pos.z-railZ(pos.x);
-  if(Math.abs(offset)>=2.1||!this.cars.some(c=>Math.abs(pos.x-c.group.position.x)<10))return;
+  // Covers every car (each 15.3 m long) plus a short run-up in the travel direction.
+  if(Math.abs(offset)>=2.1||!this.cars.some(c=>{const d=pos.x-c.group.position.x;return d>-8.5&&d<14;}))return;
   const target=railZ(pos.x)+(offset<0?-2.1:2.1);
   pos.z=THREE.MathUtils.damp(pos.z,target,8,dt);
   pos.y=Math.max(pos.y,surfaceHeight(pos.x,pos.z)+1.7);
