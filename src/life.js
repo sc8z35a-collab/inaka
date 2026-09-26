@@ -10,7 +10,8 @@ export class VillageLife{
  constructor(w){this.world=w;this.scene=w.scene;this.time=0;this.trainX=-62;this.speed=7.2;this.cx=pathX(-39);this.cz=railZ(this.cx);this.warning=false;this.gateAngle=Math.PI/2;this.cars=[];this.gates=[];this.lights=[];this.npcs=[];this.railway();this.train();this.villagers();this.update(0);}
  railway(){
   const g=new THREE.Group();this.scene.add(g);const steel=mat(0x747e7a,.3,.7),rust=mat(0x66503d),wood=mat(0x504733),concrete=mat(0x9b9d8f),yellow=mat(0xe5b735),black=mat(0x272e29);
-  const map=new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}textures/gravel.jpg`);map.wrapS=map.wrapT=THREE.RepeatWrapping;map.colorSpace=THREE.SRGBColorSpace;
+  // Share the already requested gravel image instead of downloading it a second time.
+  const map=this.world.groundTexture('path');
   const ballast=new THREE.MeshStandardMaterial({map,color:0x8e8c83,bumpMap:map,bumpScale:.12,roughness:1});const points=[];for(let x=-230;x<=230;x+=2)points.push([x,railZ(x)]);this.world.ribbon(points,4.5,ballast,.26);
   for(let x=-230;x<230;x+=2)for(const s of [-1,1]){box(g,2.03,.10,.07,x,railHeight(x)+.08,railZ(x)+s*.6,steel).rotation.y=-Math.atan(.00144*x);box(g,2.03,.06,.15,x,railHeight(x),railZ(x)+s*.6,rust).rotation.y=-Math.atan(.00144*x);}
   const ties=new THREE.InstancedMesh(new THREE.BoxGeometry(.18,.12,2.1),wood,656),d=new THREE.Object3D();for(let i=0;i<656;i++){const x=-229+i*.7;d.position.set(x,railHeight(x)-.065,railZ(x));d.rotation.y=-Math.atan(.00144*x);d.updateMatrix();ties.setMatrixAt(i,d.matrix);}ties.receiveShadow=true;this.scene.add(ties);

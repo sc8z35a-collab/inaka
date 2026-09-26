@@ -111,19 +111,30 @@ export class Countryside {
     return texture;
   }
   buildTextures() {
+    // grass/path canvases were painted (33k strokes each) and immediately replaced by photos.
     for (const kind of ['grass', 'path', 'roof', 'wood', 'plaster', 'leaf']) {
-      const map = this.texture(kind);
+      const map = kind === 'grass' || kind === 'path' ? null : this.texture(kind);
       this.materials[kind] = new THREE.MeshStandardMaterial({ map, roughness: kind === 'leaf' ? .88 : 1, bumpMap: map, bumpScale: kind === 'roof' ? .3 : .1 });
     }
     const loader = new THREE.TextureLoader();
+    this.groundClones = [];
     // Image-search sources: OpenGameArt ground textures and EveryTexture gravel.
     for (const [kind,file] of [['grass','grass.jpg'],['path','gravel.jpg']]) {
-      const map=loader.load(`${import.meta.env.BASE_URL}textures/${file}`,()=>{this.renderer.shadowMap.needsUpdate=true;});
+      const map=loader.load(`${import.meta.env.BASE_URL}textures/${file}`,()=>{
+        // Clones share the image but have their own version; they must be re-uploaded too.
+        for(const clone of this.groundClones)if(clone.source===map.source)clone.needsUpdate=true;
+        this.renderer.shadowMap.needsUpdate=true;
+      });
       map.wrapS=map.wrapT=THREE.RepeatWrapping;map.colorSpace=THREE.SRGBColorSpace;
       map.anisotropy=Math.min(8,this.renderer.capabilities.getMaxAnisotropy());
       this.materials[kind].map=map;this.materials[kind].bumpMap=map;this.materials[kind].bumpScale=kind==='path'?.16:.10;
     }
     this.materials.grass.map.repeat.set(75,75);
+    this.groundTexture = (kind, repeat = 1) => {
+      const map = this.materials[kind].map, clone = map.clone(); clone.repeat.set(repeat, repeat);
+      if (map.image?.complete) clone.needsUpdate = true; else this.groundClones.push(clone);
+      return clone;
+    };
     this.materials.darkWood = new THREE.MeshStandardMaterial({ color: 0x383729, roughness: .97, map: this.materials.wood.map });
     this.materials.stone = new THREE.MeshStandardMaterial({ color: 0x858475, roughness: 1 });
     this.materials.glass = new THREE.MeshStandardMaterial({ color: 0x555c48, metalness: .35, roughness: .24 });
@@ -146,11 +157,9 @@ export class Countryside {
     u.turbidity.value = 2.6; u.rayleigh.value = 1.15; u.mieCoefficient.value = .004; u.mieDirectionalG.value = .78;
     this.sunDirection = this.sun.position.clone().sub(this.sun.target.position).normalize();
     u.sunPosition.value.copy(this.sunDirection);
-    const generator = new THREE.PMREMGenerator(this.renderer);
-    this.environment = generator.fromScene(this.sky, .08, .1, 1600);
-    this.scene.environment = this.environment.texture;
+    // The environment map is generated once by setTime(); generating it here as well
+    // doubled startup PMREM work.
     this.scene.environmentIntensity = .4;
-    generator.dispose();
   }
   addBox(w, h, d, x, y, z, material, parent = this.scene) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -192,7 +201,9 @@ export class Countryside {
   buildPaths() {
     const path=[],side=[];
     for(let z=126;z>=-106;z-=1)path.push([this.pathX(z),z]);
-    const verge=new THREE.MeshStandardMaterial({color:0x6f8543,roughness:1,map:this.materials.grass.map});
+    // Ribbon UVs are metric (1 tile / 4 m); the terrain's 75x repeat made verges shimmer.
+    const vergeMap=this.groundTexture('grass');
+    const verge=new THREE.MeshStandardMaterial({color:0x6f8543,roughness:1,map:vergeMap});
     this.ribbon(path,4.7,verge,.14);this.ribbon(path,2.75,this.materials.path,.24);
     const road=this.materials.path.clone();road.color.set(0x96978b);
     for(let x=-111;x<=111;x+=1)side.push([x,-29+1.3*Math.sin(x*.04)]);
@@ -445,7 +456,8 @@ export class Countryside {
     this.sky.material.uniforms.sunPosition.value.copy(this.sunDirection);this.sky.material.uniforms.turbidity.value=settings.sky;
     this.lighting?.syncSun();
     const generator = new THREE.PMREMGenerator(this.renderer);
-    const environment = generator.fromScene(this.sky,.08,.1,1600);
+    // sigma .08 exceeded PMREM's 20-tap limit (console warnings, clipped blur).
+    const environment = generator.fromScene(this.sky,.035,.1,1600);
     this.scene.environment = environment.texture;
     this.environment?.dispose(); this.environment = environment; generator.dispose();
     this.clouds.forEach(c=>c.material.color.set(value==='evening'?0xffd0a1:0xffffff));
