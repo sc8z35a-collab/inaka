@@ -1,10 +1,10 @@
 import './style.css';
-import { createIcons, VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sprout, MoveUp, X, MapPin, Scan, Map, Camera, Footprints, Bike } from 'lucide';
+import { createIcons, VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan, Map, Camera, Footprints, Bike } from 'lucide';
 import { Countryside, spots as originalSpots } from './scene.js';
 import { plainsFields, plainsSpots, plainsBounds } from './plains.js';
 
 const $ = selector => document.querySelector(selector);
-const icons = () => createIcons({ icons: { VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sprout, MoveUp, X, MapPin, Scan, Map, Camera, Footprints, Bike } });
+const icons = () => createIcons({ icons: { VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan, Map, Camera, Footprints, Bike } });
 icons();
 let world, toastTimer;
 let saved = {};
@@ -25,6 +25,7 @@ const settings = {
   lightingVersion: 1,
   sensitivity: Math.max(.3, Math.min(1.6, Number(saved.sensitivity) || .8)),
   volume: Number.isFinite(saved.volume) ? Math.max(0, Math.min(1, saved.volume)) : .5,
+  time: ['morning', 'day', 'evening'].includes(saved.time) ? saved.time : 'day',
 };
 const persist = () => { try { localStorage.setItem('satoyama-immersive', JSON.stringify(settings)); } catch { /* Private mode. */ } };
 function toast(message) {
@@ -51,9 +52,18 @@ class NatureAudio {
         gain.gain.value = volume; source.connect(filter); filter.connect(gain); gain.connect(this.master); source.start();
       }
     }
-    await this.ctx.resume(); this.enabled = !this.enabled;
+    this.enabled = !this.enabled;
+    clearTimeout(this.suspendTimer);
+    if (this.enabled) {
+      try { await this.ctx.resume(); } catch (error) { this.enabled = false; throw error; }
+    }
     this.master.gain.setTargetAtTime(this.enabled ? settings.volume : 0, this.ctx.currentTime, .4);
-    if (this.enabled) this.scheduleBird(); else clearTimeout(this.timer);
+    if (this.enabled) this.scheduleBird();
+    else {
+      clearTimeout(this.timer);
+      // Muted noise sources kept burning CPU/battery; suspend after the fade-out.
+      this.suspendTimer = setTimeout(() => { if (!this.enabled) this.ctx.suspend().catch(() => {}); }, 2000);
+    }
     $('#sound').innerHTML = `<i data-lucide="${this.enabled ? 'volume-2' : 'volume-x'}"></i>`;
     $('#sound').setAttribute('aria-pressed', String(this.enabled));
     $('#sound').setAttribute('aria-label', `環境音を${this.enabled ? 'オフ' : 'オン'}にする`);
@@ -62,6 +72,8 @@ class NatureAudio {
   scheduleBird() {
     clearTimeout(this.timer);
     if (!this.enabled) return;
+    // Hidden tabs: skip this chirp (the context is suspended) but keep the schedule alive.
+    if (document.hidden || this.ctx.state !== 'running') { this.timer = setTimeout(() => this.scheduleBird(), 4000); return; }
     const now = this.ctx.currentTime + .1, base = 1900 + Math.random() * 900;
     for (let j = 0; j < 3; j++) {
       const start = now + j * .18, osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
@@ -82,16 +94,20 @@ document.addEventListener('visibilitychange', () => {
   if (audio.ctx) { if (document.hidden) audio.ctx.suspend().catch(() => {}); else if (audio.enabled) audio.ctx.resume().catch(() => {}); }
 });
 
-function setPanel(open) {
+function setPanel(open, returnFocus = false) {
+  const wasOpen = !$('#settings').hidden;
   $('#settings').hidden = !open;
   document.body.classList.toggle('panel-open', open);
   $('#settings-button').setAttribute('aria-expanded', String(open));
+  $('#settings-button').setAttribute('aria-label', open ? '設定を閉じる' : '設定を開く');
   if (world) { world.paused = open; world.resetInput(); }
   resetTouchControls();
-  if (open) $('#close-settings').focus(); else world?.renderer.domElement.focus({ preventScroll: true });
+  // Keyboard users closing the dialog return to the button that opened it (WAI-ARIA).
+  if (open) $('#close-settings').focus();
+  else if (wasOpen) (returnFocus ? $('#settings-button') : world?.renderer.domElement)?.focus({ preventScroll: true });
 }
 $('#settings-button').addEventListener('click', () => setPanel($('#settings').hidden));
-$('#close-settings').addEventListener('click', () => setPanel(false));
+$('#close-settings').addEventListener('click', () => setPanel(false, true));
 $('#world').addEventListener('pointerdown', () => { if (!$('#settings').hidden) setPanel(false); });
 $('#quality').value = settings.quality;
 $('#sensitivity').value = settings.sensitivity;
@@ -99,9 +115,19 @@ $('#volume').value = settings.volume;
 $('#quality').addEventListener('change', e => { settings.quality = e.target.value; const actual=world?.setQuality(settings.quality); if(actual) settings.quality=actual; $('#quality').value=settings.quality; updateResolution(); persist(); });
 $('#sensitivity').addEventListener('input', e => { settings.sensitivity = Number(e.target.value); if (world) world.sensitivity = settings.sensitivity; persist(); });
 $('#volume').addEventListener('input', e => { settings.volume = Number(e.target.value); audio.volume(settings.volume); persist(); });
-$('#time-of-day').addEventListener('change',e=>{world?.setTime(e.target.value);$('#time-label').textContent={morning:'07:00',day:'14:32',evening:'17:30'}[e.target.value];});
-$('#viewpoint').addEventListener('change',e=>{world?.goTo(Number(e.target.value),true);setPanel(false);});
-$('#reset-position').addEventListener('click', () => { setPanel(false); world?.goTo(0, true); toast(isPlains ? '見晴らしの丘へ。' : 'いつものあぜ道へ。'); });
+function applyTime(value) {
+  world?.setTime(value);
+  $('#time-label').textContent = { morning: '07:00', day: '14:32', evening: '17:30' }[value];
+  // The HUD always showed a midday sun, even at dawn or dusk.
+  const icon = document.querySelector('.sun-icon');
+  icon.outerHTML = `<i data-lucide="${{ morning: 'sunrise', day: 'sun', evening: 'sunset' }[value]}" class="sun-icon"></i>`;
+  icons();
+}
+$('#time-of-day').addEventListener('change', e => { applyTime(e.target.value); settings.time = e.target.value; persist(); });
+$('#viewpoint').addEventListener('change',e=>{
+  world?.goTo(Number(e.target.value),true);setPanel(false);
+});
+$('#reset-position').addEventListener('click', () => { setPanel(false); world?.goTo(0, true); $('#viewpoint').value = '0'; toast(isPlains ? '見晴らしの丘へ。' : 'いつものあぜ道へ。'); });
 $('.brand').addEventListener('click', e => { e.preventDefault(); world?.renderer.domElement.focus({ preventScroll: true }); });
 const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
 let fullscreenBusy = false;
@@ -154,7 +180,7 @@ $('#hide-ui').addEventListener('click', () => setZen(true));
 $('#show-ui').addEventListener('click', () => setZen(false));
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (document.body.classList.contains('fullscreen-fallback')) { document.body.classList.remove('fullscreen-fallback'); syncFullscreen(); } if (!$('#settings').hidden) setPanel(false); if (document.body.classList.contains('zen')) setZen(false); }
+    if (document.body.classList.contains('fullscreen-fallback')) { document.body.classList.remove('fullscreen-fallback'); syncFullscreen(); } if (!$('#settings').hidden) setPanel(false, true); if (document.body.classList.contains('zen')) setZen(false); }
   if (e.code === 'KeyF' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing && !e.target.isContentEditable && !e.target.closest?.('input,select,textarea,button,a')) {
     e.preventDefault(); toggleFullscreen();
   }
@@ -187,7 +213,7 @@ const look = $('#look-pad'); let lookPointer = null;
 look.addEventListener('pointerdown', e => { if (lookPointer || !world || world.paused || e.button !== 0) return; e.preventDefault(); lookPointer = { id: e.pointerId, x: e.clientX, y: e.clientY }; look.setPointerCapture(e.pointerId); });
 look.addEventListener('pointermove', e => {
   if (!lookPointer || e.pointerId !== lookPointer.id || !world || world.paused) return;
-  world.transition = null; world.yaw -= (e.clientX - lookPointer.x) * .003 * settings.sensitivity;
+  world.releaseView(); world.yaw -= (e.clientX - lookPointer.x) * .003 * settings.sensitivity;
   world.pitch = Math.max(-1.18, Math.min(1.1, world.pitch - (e.clientY - lookPointer.y) * .0024 * settings.sensitivity));
   lookPointer.x = e.clientX; lookPointer.y = e.clientY;
 });
@@ -320,27 +346,30 @@ function toggleMinimap(open) {
 $('#minimap-toggle').addEventListener('click', () => toggleMinimap($('#minimap-content').hidden));
 toggleMinimap(!matchMedia('(max-width: 760px), (max-height: 550px)').matches);
 
+const compassLabels = document.querySelectorAll('.compass > span:not(.compass-tick)');
 requestAnimationFrame(() => setTimeout(() => {
   try {
     world = new Countryside($('#world'), {
       onReady: () => { document.body.classList.add('ready'); $('#world').dataset.ready = 'true'; },
       onError: message => toast(message),
       onSpot: index => { $('#viewpoint').value = String(index); toast(activeSpots[index].subtitle); },
+      onContextRestored: quality => { settings.quality = quality; $('#quality').value = quality; persist(); updateResolution(); },
       onPosition: () => {
         if (!world) return;
         const yaw = ((world.yaw * 180 / Math.PI) % 360 + 360) % 360;
         const directions = ['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'];
         const heading = Math.round(yaw / 45) % 8;
-        const labels = $('.compass').querySelectorAll('span');
+        const labels = compassLabels;
         labels[0].textContent = directions[(heading + 2) % 8];
-        labels[2].textContent = directions[heading];
-        labels[4].textContent = directions[(heading + 6) % 8];
+        labels[1].textContent = directions[heading];
+        labels[2].textContent = directions[(heading + 6) % 8];
         updateJourney();
       },
     }, mapId);
     world.walking = true; world.sensitivity = settings.sensitivity; world.travelMode = settings.travelMode;
     world.paused = !$('#settings').hidden;
-    if (world.timeOfDay !== $('#time-of-day').value) world.setTime($('#time-of-day').value);
+    $('#time-of-day').value = settings.time;
+    applyTime(settings.time);
     const actual=world.setQuality(settings.quality);
     settings.quality=actual;
     $('#quality').value=settings.quality;
@@ -348,7 +377,11 @@ requestAnimationFrame(() => setTimeout(() => {
     if (import.meta.env.DEV) window.__satoyama = world;
   } catch (error) {
     console.error('Countryside initialization failed:', error);
-    $('#loading').innerHTML = '<span>3Dの風景を表示できませんでした。</span><span style="font-size:11px;max-width:280px;text-align:center;line-height:2">WebGL 2 対応の最新版 Chrome / Safari でお試しください。</span><button id="retry">もう一度読み込む</button>';
+    // A half-built world kept rendering (and holding the GPU) behind the error message.
+    try { world?.renderer.setAnimationLoop(null); world?.renderer.dispose(); } catch { /* already broken */ }
+    world = null;
+    document.body.classList.remove('ready');
+    $('#loading').innerHTML = '<span>3Dの風景を表示できませんでした。</span><span style="font-size:11px;max-width:280px;text-align:center;line-height:2">WebGL 2 対応の最新版 Chrome / Safari でお試しください。</span><button id="retry" class="reset-button" style="width:auto;padding:10px 22px;color:#51664e">もう一度読み込む</button>';
     $('#retry').addEventListener('click', () => location.reload());
   }
 }, 80));

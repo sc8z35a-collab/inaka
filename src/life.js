@@ -10,7 +10,8 @@ export class VillageLife{
  constructor(w){this.world=w;this.scene=w.scene;this.time=0;this.trainX=-62;this.speed=7.2;this.cx=pathX(-39);this.cz=railZ(this.cx);this.warning=false;this.gateAngle=Math.PI/2;this.cars=[];this.gates=[];this.lights=[];this.npcs=[];this.railway();this.train();this.villagers();this.update(0);}
  railway(){
   const g=new THREE.Group();this.scene.add(g);const steel=mat(0x747e7a,.3,.7),rust=mat(0x66503d),wood=mat(0x504733),concrete=mat(0x9b9d8f),yellow=mat(0xe5b735),black=mat(0x272e29);
-  const map=new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}textures/gravel.jpg`);map.wrapS=map.wrapT=THREE.RepeatWrapping;map.colorSpace=THREE.SRGBColorSpace;
+  // Share the already requested gravel image instead of downloading it a second time.
+  const map=this.world.groundTexture('path');
   const ballast=new THREE.MeshStandardMaterial({map,color:0x8e8c83,bumpMap:map,bumpScale:.12,roughness:1});const points=[];for(let x=-230;x<=230;x+=2)points.push([x,railZ(x)]);this.world.ribbon(points,4.5,ballast,.26);
   for(let x=-230;x<230;x+=2)for(const s of [-1,1]){box(g,2.03,.10,.07,x,railHeight(x)+.08,railZ(x)+s*.6,steel).rotation.y=-Math.atan(.00144*x);box(g,2.03,.06,.15,x,railHeight(x),railZ(x)+s*.6,rust).rotation.y=-Math.atan(.00144*x);}
   const ties=new THREE.InstancedMesh(new THREE.BoxGeometry(.18,.12,2.1),wood,656),d=new THREE.Object3D();for(let i=0;i<656;i++){const x=-229+i*.7;d.position.set(x,railHeight(x)-.065,railZ(x));d.rotation.y=-Math.atan(.00144*x);d.updateMatrix();ties.setMatrixAt(i,d.matrix);}ties.receiveShadow=true;this.scene.add(ties);
@@ -60,6 +61,14 @@ export class VillageLife{
   }
   if(Math.abs(z-railZ(x))<1.9&&this.cars.some(c=>Math.abs(x-c.group.position.x)<8.6))return false;
   return !this.npcs.some(n=>Math.hypot(x-n.root.position.x,z-n.root.position.z)<.48);
+  }
+ clearTrack(pos,dt){
+  const offset=pos.z-railZ(pos.x);
+  // Covers every car (each 15.3 m long) plus a short run-up in the travel direction.
+  if(Math.abs(offset)>=2.1||!this.cars.some(c=>{const d=pos.x-c.group.position.x;return d>-8.5&&d<14;}))return;
+  const target=railZ(pos.x)+(offset<0?-2.1:2.1);
+  pos.z=THREE.MathUtils.damp(pos.z,target,8,dt);
+  pos.y=Math.max(pos.y,surfaceHeight(pos.x,pos.z)+1.7);
  }
  update(dt){this.time+=dt;this.trainX+=dt*this.speed;if(this.trainX>249)this.trainX=-230;for(const car of this.cars){const x=this.trainX-car.offset;car.group.position.set(x,railHeight(x)+.12,railZ(x));car.group.rotation.y=-Math.atan(.00144*x);car.wheels.forEach(w=>w.rotation.y-=dt*this.speed/.38);}this.warning=this.trainX+8>this.cx-55&&this.trainX-24<this.cx+17;this.gateAngle=THREE.MathUtils.lerp(this.gateAngle,this.warning?0:Math.PI/2,Math.min(1,dt*.95));this.gates.forEach(g=>g.rotation.z=-g.userData.side*this.gateAngle);this.lights.forEach(l=>l.lamp.material.emissiveIntensity=this.warning&&Math.floor(this.time*2.6)%2===l.phase?2.7:0);
   for(const n of this.npcs){
@@ -67,10 +76,17 @@ export class VillageLife{
    if(next>n.length||next<0){n.direction*=-1;next=clamp(next,0,n.length);}
    const p=n.curve.getPointAt(clamp(next/n.length,0,1));
    // A pedestrian already on the crossing must exit, not freeze on the rails.
-   const onCrossing=Math.abs(n.root.position.z-this.cz)<3.5;
-   const trainClose=this.cars.some(c=>Math.abs(p.x-c.group.position.x)<8.8)&&Math.abs(p.z-railZ(p.x))<2;
+   // Previously only z was compared, so anyone in that z band anywhere on the map
+   // counted as "on the crossing" and ignored the warning.
+   const here=n.root.position,onCrossing=Math.abs(here.z-this.cz)<3.5&&Math.abs(here.x-this.cx)<3.4;
+   // Someone already between the rails must keep walking off them, never freeze there.
+   const onRails=Math.abs(here.z-railZ(here.x))<2;
+   const trainClose=!onRails&&this.cars.some(c=>Math.abs(p.x-c.group.position.x)<8.8)&&Math.abs(p.z-railZ(p.x))<2;
+   // Villagers walked straight through each other.
+   const crowded=this.npcs.some(o=>o!==n&&Math.hypot(p.x-o.root.position.x,p.z-o.root.position.z)<.55
+     &&Math.hypot(p.x-o.root.position.x,p.z-o.root.position.z)<Math.hypot(here.x-o.root.position.x,here.z-o.root.position.z));
    n.waiting=(this.warning&&!onCrossing&&Math.abs(p.x-this.cx)<3.4&&Math.abs(p.z-this.cz)<5.4)
-     ||trainClose||Math.hypot(p.x-this.world.camera.position.x,p.z-this.world.camera.position.z)<1.1
+     ||trainClose||crowded||Math.hypot(p.x-this.world.camera.position.x,p.z-this.world.camera.position.z)<1.1
      ||this.world.colliders.some(c=>colliderContains(c,p.x,p.z,.28));
    if(!n.waiting){n.distance=next;n.phase+=dt*n.speed*7;}
    n.gait=THREE.MathUtils.damp(n.gait,n.waiting?0:1,12,dt);

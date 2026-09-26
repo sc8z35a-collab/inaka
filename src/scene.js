@@ -46,8 +46,10 @@ export class Countryside {
     this.camera.lookAt(...this.spots[0].look);
     this.yaw = this.camera.rotation.y;
     this.pitch = this.camera.rotation.x;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-    this.renderer.setPixelRatio(devicePixelRatio);
+    // preserveDrawingBuffer forced an extra full-screen copy every frame (costly on tile GPUs);
+    // screenshot()/thumbnails() read the canvas synchronously right after rendering instead.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // Lighting refreshes animated shadows at the selected quality cadence.
@@ -95,6 +97,9 @@ export class Countryside {
     this.resize();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
+    // Moving the window to another monitor / zooming changes DPR without resizing the element.
+    const watchRatio=()=>{const query=matchMedia(`(resolution: ${devicePixelRatio}dppx)`);query.addEventListener('change',()=>{this.resize();watchRatio();},{once:true});};
+    watchRatio();
     this.clock = new THREE.Clock();
     this.renderer.setAnimationLoop(() => this.tick());
   }
@@ -124,19 +129,33 @@ export class Countryside {
     return texture;
   }
   buildTextures() {
+    // grass/path canvases were painted (33k strokes each) and immediately replaced by photos.
     for (const kind of ['grass', 'path', 'roof', 'wood', 'plaster', 'leaf']) {
-      const map = this.texture(kind);
+      const map = kind === 'grass' || kind === 'path' ? null : this.texture(kind);
       this.materials[kind] = new THREE.MeshStandardMaterial({ map, roughness: kind === 'leaf' ? .88 : 1, bumpMap: map, bumpScale: kind === 'roof' ? .3 : .1 });
     }
     const loader = new THREE.TextureLoader();
+    this.groundClones = [];
     // Image-search sources: OpenGameArt ground textures and EveryTexture gravel.
     for (const [kind,file] of [['grass','grass.jpg'],['path','gravel.jpg']]) {
-      const map=loader.load(`${import.meta.env.BASE_URL}textures/${file}`,()=>{this.renderer.shadowMap.needsUpdate=true;});
+      const map=loader.load(`${import.meta.env.BASE_URL}textures/${file}`,()=>{
+        // Clones share the image but have their own version; they must be re-uploaded too.
+        for(const clone of this.groundClones)if(clone.source===map.source)clone.needsUpdate=true;
+        this.renderer.shadowMap.needsUpdate=true;
+      });
       map.wrapS=map.wrapT=THREE.RepeatWrapping;map.colorSpace=THREE.SRGBColorSpace;
       map.anisotropy=Math.min(16,this.renderer.capabilities.getMaxAnisotropy());
       this.materials[kind].map=map;this.materials[kind].bumpMap=map;this.materials[kind].bumpScale=kind==='path'?.16:.10;
     }
     this.materials.grass.map.repeat.set(75,75);
+    this.groundTexture = (kind, repeat = 1) => {
+      // Texture.clone() flags an upload immediately, which warns while the image is still loading.
+      const map = this.materials[kind].map, clone = new THREE.Texture();
+      clone.source = map.source; clone.wrapS = clone.wrapT = THREE.RepeatWrapping;
+      clone.colorSpace = map.colorSpace; clone.anisotropy = map.anisotropy; clone.repeat.set(repeat, repeat);
+      if (map.image?.complete) clone.needsUpdate = true; else this.groundClones.push(clone);
+      return clone;
+    };
     this.materials.darkWood = new THREE.MeshStandardMaterial({ color: 0x383729, roughness: .97, map: this.materials.wood.map });
     this.materials.stone = new THREE.MeshStandardMaterial({ color: 0x858475, roughness: 1 });
     this.materials.glass = new THREE.MeshStandardMaterial({ color: 0x555c48, metalness: .35, roughness: .24 });
@@ -159,11 +178,9 @@ export class Countryside {
     u.turbidity.value = 2.6; u.rayleigh.value = 1.15; u.mieCoefficient.value = .004; u.mieDirectionalG.value = .78;
     this.sunDirection = this.sun.position.clone().sub(this.sun.target.position).normalize();
     u.sunPosition.value.copy(this.sunDirection);
-    const generator = new THREE.PMREMGenerator(this.renderer);
-    this.environment = generator.fromScene(this.sky, .08, .1, 1600);
-    this.scene.environment = this.environment.texture;
+    // The environment map is generated once by setTime(); generating it here as well
+    // doubled startup PMREM work.
     this.scene.environmentIntensity = .4;
-    generator.dispose();
   }
   addBox(w, h, d, x, y, z, material, parent = this.scene) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -204,8 +221,10 @@ export class Countryside {
   }
   buildPaths() {
     const path=[],side=[];
-    for(let z=126;z>=-106;z-=1)path.push([this.pathX(z),z]);
-    const verge=new THREE.MeshStandardMaterial({color:0x6f8543,roughness:1,map:this.materials.grass.map});
+    for(let z=126;z>=-75;z-=1)path.push([this.pathX(z),z]);path.push([this.pathX(-75.4),-75.4]);
+    // Ribbon UVs are metric (1 tile / 4 m); the terrain's 75x repeat made verges shimmer.
+    const vergeMap=this.groundTexture('grass');
+    const verge=new THREE.MeshStandardMaterial({color:0x6f8543,roughness:1,map:vergeMap});
     this.ribbon(path,4.7,verge,.14);this.ribbon(path,2.75,this.materials.path,.24);
     const road=this.materials.path.clone();road.color.set(0x96978b);
     for(let x=-111;x<=111;x+=1)side.push([x,-29+1.3*Math.sin(x*.04)]);
@@ -344,7 +363,8 @@ export class Countryside {
     const dummy=new THREE.Object3D(),color=new THREE.Color();
     const rocks=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),this.materials.stone,620);
     for(let i=0;i<620;i++){
-      const z=range(-64,127),x=this.pathX(z)+(rand()>.5?1:-1)*range(1.6,2.3);
+      const z=range(-64,127);let x=this.pathX(z)+(rand()>.5?1:-1)*range(1.6,2.3);
+      if(fieldAt(x,z))x=2*this.pathX(z)-x; // Where the path grazes a paddy, keep stones on the dry verge.
       dummy.position.set(x,this.groundHeight(x,z)+range(.12,.23),z);dummy.scale.set(range(.04,.18),range(.04,.13),range(.05,.19));dummy.rotation.set(rand()*3,rand()*3,rand()*3);dummy.updateMatrix();rocks.setMatrixAt(i,dummy.matrix);color.setHSL(.13,.07,range(.34,.6));rocks.setColorAt(i,color);
     }rocks.receiveShadow=true;this.scene.add(rocks);
     // Wildflowers and weeds follow the banks, rather than being scattered in the water.
@@ -352,7 +372,8 @@ export class Countryside {
     const weeds=new THREE.InstancedMesh(blade,new THREE.MeshStandardMaterial({color:0x6e8b31,side:THREE.DoubleSide,roughness:1}),8000);
     const flowers=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.045,0),new THREE.MeshStandardMaterial({color:0xf4eed1,roughness:1}),700);
     for(let i=0;i<8000;i++){
-      const z=range(-64,130),x=this.pathX(z)+(rand()>.5?1:-1)*range(1.55,2.34);
+      const z=range(-64,126);let x=this.pathX(z)+(rand()>.5?1:-1)*range(1.55,2.34);
+      if(fieldAt(x,z))x=2*this.pathX(z)-x;
       dummy.position.set(x,this.groundHeight(x,z)+.17,z);dummy.rotation.set(range(-.4,.4),range(0,6.2),range(-.45,.45));dummy.scale.setScalar(range(.45,1.2));dummy.updateMatrix();weeds.setMatrixAt(i,dummy.matrix);
       if(i<700){dummy.position.y+=range(.2,.4);dummy.scale.setScalar(range(.6,1.3));dummy.updateMatrix();flowers.setMatrixAt(i,dummy.matrix);}
     }this.scene.add(weeds,flowers);
@@ -397,11 +418,12 @@ export class Countryside {
     });
     canvas.addEventListener('pointermove',e=>{
       if(!drag||drag.id!==e.pointerId||this.paused)return;
-      this.transition=null;
+      this.releaseView();
       this.yaw-=(e.clientX-drag.x)*.003*(this.sensitivity??.8);
       this.pitch=clamp(this.pitch-(e.clientY-drag.y)*.0024*(this.sensitivity??.8),-1.18,1.1);
       drag.x=e.clientX;drag.y=e.clientY;
     });
+    // Only the pointer that started the drag may end it (multi-touch safety).
     const release = event => {
       if (event && event.pointerId !== drag?.id) return;
       const id = drag?.id; drag = null; canvas.style.cursor = 'grab';
@@ -411,23 +433,43 @@ export class Countryside {
     for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(event, release);
     canvas.style.cursor='grab';
     window.addEventListener('keydown',e=>{
-      if(this.paused || e.ctrlKey || e.metaKey || e.altKey || e.isComposing ||
-        e.target.isContentEditable || e.target.closest?.('input,button,a,select,textarea'))return;
+      // Buttons keep focus after a click; movement keys must still walk. Only text-entry
+      // controls (and selects/ranges, which use arrows) keep their own keyboard handling.
+      if(this.paused||e.isComposing||e.target.isContentEditable||e.target.matches?.('input,select,textarea,[contenteditable]'))return;
+      // Browser shortcuts (Ctrl/Cmd+S, Ctrl+D...) are not movement, and their keyup is often lost.
+      if(e.ctrlKey||e.metaKey||e.altKey)return;
+      if(e.target.matches?.('button,a')&&e.code.startsWith('Arrow'))return;
       if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight'].includes(e.code)){
+        this.keys.add(e.code);
+        // Shift alone (sprint modifier, Shift+Tab) must not cancel a viewpoint transition
+        // or scroll-block the page; only real movement keys take over the camera.
+        if(e.code.startsWith('Shift'))return;
         e.preventDefault();
         if (!this.walking) this.setWalking(true);
         this.transition=null;
-        this.keys.add(e.code);
       }
     });
-    window.addEventListener('keyup',e=>this.keys.delete(e.code));
+    window.addEventListener('keyup',e=>{
+      this.keys.delete(e.code);
+      // macOS never sends keyup for keys released while Cmd is held.
+      if(e.key==='Meta')this.keys.clear();
+    });
     document.addEventListener('focusin', e => {
-      if (e.target.isContentEditable || e.target.closest?.('input,button,a,select,textarea')) this.resetInput();
+      if (e.target.isContentEditable || e.target.closest?.('input,select,textarea')) this.resetInput();
     });
     window.addEventListener('blur',()=>this.resetInput());
     document.addEventListener('visibilitychange',()=>{if(document.hidden)this.resetInput();});
-    canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.callbacks.onError?.('グラフィックの接続が中断されました。ページを再読み込みしてください。');});
+    canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.contextLost=true;this.callbacks.onContextLost?.();this.callbacks.onError?.('グラフィックの接続が中断されました。軽い描画で復帰を試みます。');});
+    canvas.addEventListener('webglcontextrestored',()=>{
+      this.contextLost=false;
+      // Restored contexts lose every GPU resource; recompile and redraw shadows at a lighter preset.
+      const fallback=this.quality==='hdr'||this.quality==='high'?'low':this.quality;
+      this.callbacks.onContextRestored?.(this.setQuality(fallback));
+      this.renderer.shadowMap.needsUpdate=true;
+    });
   }
+  // Looking around keeps an in-flight teleport going but stops steering the view.
+  releaseView(){if(this.transition)this.transition.freeLook=true;}
   resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;this.releaseDrag?.();}
   setWalking(value) {
     this.walking=value;this.resetInput();this.callbacks.onWalking?.(value);
@@ -456,7 +498,8 @@ export class Countryside {
     this.sky.material.uniforms.rayleigh.value=this.isPlains ? 1.65 : 1.15;
     this.lighting?.syncSun();
     const generator = new THREE.PMREMGenerator(this.renderer);
-    const environment = generator.fromScene(this.sky,.08,.1,1600);
+    // sigma .08 exceeded PMREM's 20-tap limit (console warnings, clipped blur).
+    const environment = generator.fromScene(this.sky,.035,.1,1600);
     this.scene.environment = environment.texture;
     this.environment?.dispose(); this.environment = environment; generator.dispose();
     this.clouds.forEach(c=>c.material.color.set(value==='evening'?0xffd0a1:0xffffff));
@@ -478,9 +521,10 @@ export class Countryside {
     this.camera.fov = this.mobile ? 64 : 59;
     // Keep UI at native resolution; only the 3D drawing buffer is scaled.
     // Re-evaluate DPR on resize (monitor changes and browser zoom included).
+    // ULTRA targets a 4K-class buffer; HDR/high cap DPR at 2 (beyond that the gain is invisible).
     const requestedRatio = this.quality === 'ultra' ? Math.max(devicePixelRatio, 3840 / Math.max(w, h))
       : this.quality === 'low' ? Math.min(devicePixelRatio, 1.5) * .9
-      : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : devicePixelRatio;
+      : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 2);
     // Bound allocations by both GPU limits and an 8.3 MP render budget.
     const gl = this.renderer.getContext();
     const maxSize = Math.min(this.renderer.capabilities.maxTextureSize, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
@@ -498,25 +542,30 @@ export class Countryside {
     try {
       this.renderer.setPixelRatio(1);this.renderer.setSize(480,240,false);
       this.camera.aspect=2;this.camera.updateProjectionMatrix();this.lighting.resize(480,240);
-      for(const spot of this.spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.render();result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
+      // lookAt() writes rotation in the camera's YXZ order, but render() never re-applied it:
+      // shadows were refreshed for the old viewpoint, so thumbnails showed stale shadows.
+      for(const spot of this.spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.camera.updateMatrixWorld();this.renderer.shadowMap.needsUpdate=true;this.render();result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
     } finally {
-      this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.resize();this.render();
+      this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.resize();this.renderer.shadowMap.needsUpdate=true;this.render();
     }
     return result;
   }
   tick(){
-    const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden)return;
+    const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden||this.contextLost)return;
     // OS reduced-motion changes apply live, without disabling intentional navigation.
     const animationDt = this.motionPreference.matches || this.paused ? 0 : dt;
     this.elapsed+=animationDt;
     if(animationDt > 0)this.life.update(animationDt);
     this.navigationElapsed = (this.navigationElapsed ?? 0) + dt;
     this.updateLandscape?.();
-    this.windUniform.value=this.elapsed;this.windStrength.value=this.wind;
-    this.water.material.normalMap.offset.set(this.elapsed*.003*this.wind,this.elapsed*.002*this.wind);
+    // Keep shader time small: float32 precision in GLSL makes wind jitter after hours.
+    // 2π·1000 s is a common period of every sin/cos term used by the rice shader.
+    this.windUniform.value=this.elapsed%(Math.PI*2000);this.windStrength.value=this.wind;
+    this.water.material.normalMap.offset.set((this.elapsed*.003*this.wind)%1,(this.elapsed*.002*this.wind)%1);
     if(this.transition&&!this.paused){
       const t=this.transition;t.elapsed+=dt;const a=this.motionPreference.matches ? 1 : smooth(t.elapsed/t.duration);
-      this.camera.position.lerpVectors(t.start,t.end,a);this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);
+      this.camera.position.lerpVectors(t.start,t.end,a);
+      if(!t.freeLook){this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);}
       if (this.isPlains) this.camera.position.y = Math.max(this.camera.position.y, this.surfaceHeight(this.camera.position.x, this.camera.position.z) + 1.7);
       if(a===1)this.transition=null;
     }else if(this.walking&&!this.paused){
@@ -527,21 +576,27 @@ export class Countryside {
         const speed=this.speed*(this.travelMode === 'cycle' ? 3 : this.keys.has('ShiftLeft')||this.keys.has('ShiftRight')?1.8:1)*dt;
         const dx=(-Math.sin(this.yaw)*forward+Math.cos(this.yaw)*side)*speed,dz=(-Math.cos(this.yaw)*forward-Math.sin(this.yaw)*side)*speed;
         const pos=this.camera.position;
-        const allowed=(x,z)=>!this.colliders.some(c=>colliderContains(c,x,z,.25))&&this.life.canEnter(x,z,pos);
+        // A player already inside a blocked zone (crossing closed around them, a villager
+        // stepping close) was frozen forever. Blocked zones may always be left.
+        const trapped=!this.life.canEnter(pos.x,pos.z,pos);
+        // Colliders only block entry: an interrupted teleport could leave the camera inside a house.
+        const allowed=(x,z,from)=>!this.colliders.some(c=>colliderContains(c,x,z,.25)&&!colliderContains(c,from.x,from.z,.25))&&(trapped||this.life.canEnter(x,z,from));
         // Sweep small steps so fast travel cannot skip a thin fence or sign.
         const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / .18));
         for (let i = 0; i < steps; i++) {
           const x = clamp(pos.x + dx / steps, this.bounds.minX, this.bounds.maxX);
           const z = clamp(pos.z + dz / steps, this.bounds.minZ, this.bounds.maxZ);
-          if (allowed(x, pos.z)) pos.x = x;
-          if (allowed(pos.x, z)) pos.z = z;
+          if (allowed(x, pos.z, pos)) pos.x = x;
+          if (allowed(pos.x, z, pos)) pos.z = z;
         }
         const bob = this.motionPreference.matches ? 0 : Math.sin(this.elapsed*7)*.023;
         pos.y=THREE.MathUtils.lerp(pos.y,this.surfaceHeight(pos.x,pos.z)+1.7+bob,Math.min(1,dt*10));
       }
     }
+    // Trains used to pass straight through a player standing on the rails.
+    if(!this.transition)this.life.clearTrack?.(this.camera.position,dt);
     this.camera.rotation.set(this.pitch,this.yaw,0,'YXZ');
-    if(animationDt > 0 || !this.ready)for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=-t;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
+    if(animationDt > 0 || !this.ready)for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=Math.atan2(Math.cos(t)*d.radius,-Math.sin(t)*d.radius*.5)+Math.PI;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
     this.clouds.forEach((c,i)=>{
       c.position.x += animationDt*.13*(1+i%3);
       const limit = this.isPlains ? 1350 : 900;
