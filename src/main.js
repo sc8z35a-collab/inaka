@@ -86,6 +86,7 @@ function setPanel(open, returnFocus = false) {
   const wasOpen = !$('#settings').hidden;
   $('#settings').hidden = !open;
   $('#settings-button').setAttribute('aria-expanded', String(open));
+  $('#settings-button').setAttribute('aria-label', open ? '設定を閉じる' : '設定を開く');
   if (world) { world.paused = open; world.resetInput(); }
   resetJoystick();
   // Keyboard users closing the dialog return to the button that opened it (WAI-ARIA);
