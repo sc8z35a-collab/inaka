@@ -419,10 +419,13 @@ export class Countryside {
       if(e.ctrlKey||e.metaKey||e.altKey)return;
       if(e.target.matches?.('button,a')&&e.code.startsWith('Arrow'))return;
       if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight'].includes(e.code)){
+        this.keys.add(e.code);
+        // Shift alone (sprint modifier, Shift+Tab) must not cancel a viewpoint transition
+        // or scroll-block the page; only real movement keys take over the camera.
+        if(e.code.startsWith('Shift'))return;
         e.preventDefault();
         if (!this.walking) this.setWalking(true);
         this.transition=null;
-        this.keys.add(e.code);
       }
     });
     window.addEventListener('keyup',e=>{
