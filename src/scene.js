@@ -134,7 +134,10 @@ export class Countryside {
     }
     this.materials.grass.map.repeat.set(75,75);
     this.groundTexture = (kind, repeat = 1) => {
-      const map = this.materials[kind].map, clone = map.clone(); clone.repeat.set(repeat, repeat);
+      // Texture.clone() flags an upload immediately, which warns while the image is still loading.
+      const map = this.materials[kind].map, clone = new THREE.Texture();
+      clone.source = map.source; clone.wrapS = clone.wrapT = THREE.RepeatWrapping;
+      clone.colorSpace = map.colorSpace; clone.anisotropy = map.anisotropy; clone.repeat.set(repeat, repeat);
       if (map.image?.complete) clone.needsUpdate = true; else this.groundClones.push(clone);
       return clone;
     };
