@@ -163,7 +163,7 @@ const look = $('#look-pad'); let lookPointer = null;
 look.addEventListener('pointerdown', e => { if (lookPointer) return; e.preventDefault(); lookPointer = { id: e.pointerId, x: e.clientX, y: e.clientY }; look.setPointerCapture(e.pointerId); });
 look.addEventListener('pointermove', e => {
   if (!lookPointer || e.pointerId !== lookPointer.id || !world || world.paused) return;
-  world.transition = null; world.yaw -= (e.clientX - lookPointer.x) * .003 * settings.sensitivity;
+  world.releaseView(); world.yaw -= (e.clientX - lookPointer.x) * .003 * settings.sensitivity;
   world.pitch = Math.max(-1.18, Math.min(1.1, world.pitch - (e.clientY - lookPointer.y) * .0024 * settings.sensitivity));
   lookPointer.x = e.clientX; lookPointer.y = e.clientY;
 });

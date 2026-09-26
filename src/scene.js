@@ -398,7 +398,7 @@ export class Countryside {
     });
     canvas.addEventListener('pointermove',e=>{
       if(!drag||drag.id!==e.pointerId||this.paused)return;
-      this.transition=null;
+      this.releaseView();
       this.yaw-=(e.clientX-drag.x)*.003*(this.sensitivity??.8);
       this.pitch=clamp(this.pitch-(e.clientY-drag.y)*.0024*(this.sensitivity??.8),-1.18,1.1);
       drag.x=e.clientX;drag.y=e.clientY;
@@ -437,6 +437,8 @@ export class Countryside {
       this.renderer.shadowMap.needsUpdate=true;
     });
   }
+  // Looking around keeps an in-flight teleport going but stops steering the view.
+  releaseView(){if(this.transition)this.transition.freeLook=true;}
   resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;this.releaseDrag?.();}
   setWalking(value) {
     this.walking=value;this.resetInput();this.callbacks.onWalking?.(value);
@@ -515,7 +517,8 @@ export class Countryside {
     this.water.material.normalMap.offset.set((this.elapsed*.003*this.wind)%1,(this.elapsed*.002*this.wind)%1);
     if(this.transition&&!this.paused){
       const t=this.transition;t.elapsed+=dt;const a=smooth(t.elapsed/t.duration);
-      this.camera.position.lerpVectors(t.start,t.end,a);this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);
+      this.camera.position.lerpVectors(t.start,t.end,a);
+      if(!t.freeLook){this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);}
       if(a===1)this.transition=null;
     }else if(this.walking&&!this.paused){
       let forward=(this.keys.has('KeyW')||this.keys.has('ArrowUp')?1:0)-(this.keys.has('KeyS')||this.keys.has('ArrowDown')?1:0)-this.joy.y;
@@ -528,7 +531,8 @@ export class Countryside {
         // A player already inside a blocked zone (crossing closed around them, a villager
         // stepping close) was frozen forever. Blocked zones may always be left.
         const trapped=!this.life.canEnter(pos.x,pos.z);
-        const allowed=(x,z)=>!this.colliders.some(c=>colliderContains(c,x,z,.25))&&(trapped||this.life.canEnter(x,z));
+        // Colliders only block entry: an interrupted teleport could leave the camera inside a house.
+        const allowed=(x,z)=>!this.colliders.some(c=>colliderContains(c,x,z,.25)&&!colliderContains(c,pos.x,pos.z,.25))&&(trapped||this.life.canEnter(x,z));
         if(allowed(pos.x+dx,pos.z))pos.x=clamp(pos.x+dx,-116,116);
         if(allowed(pos.x,pos.z+dz))pos.z=clamp(pos.z+dz,-106,126);
         pos.y=THREE.MathUtils.lerp(pos.y,surfaceHeight(pos.x,pos.z)+1.7+Math.sin(this.elapsed*7)*.023,Math.min(1,dt*10));
