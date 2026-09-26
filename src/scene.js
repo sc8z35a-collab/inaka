@@ -505,9 +505,11 @@ export class Countryside {
     try {
       this.renderer.setPixelRatio(1);this.renderer.setSize(480,240,false);
       this.camera.aspect=2;this.camera.updateProjectionMatrix();this.lighting.resize(480,240);
-      for(const spot of spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.render();result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
+      // lookAt() writes rotation in the camera's YXZ order, but render() never re-applied it:
+      // shadows were refreshed for the old viewpoint, so thumbnails showed stale shadows.
+      for(const spot of spots){this.camera.position.fromArray(spot.position);this.camera.lookAt(...spot.look);this.camera.updateMatrixWorld();this.renderer.shadowMap.needsUpdate=true;this.render();result.push(this.renderer.domElement.toDataURL('image/jpeg',.82));}
     } finally {
-      this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.resize();this.render();
+      this.camera.position.copy(position);this.camera.rotation.copy(rotation);this.renderer.setPixelRatio(ratio);this.resize();this.renderer.shadowMap.needsUpdate=true;this.render();
     }
     return result;
   }
