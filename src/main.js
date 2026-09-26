@@ -82,15 +82,19 @@ document.addEventListener('visibilitychange', () => {
   if (audio.ctx) { if (document.hidden) audio.ctx.suspend().catch(() => {}); else if (audio.enabled) audio.ctx.resume().catch(() => {}); }
 });
 
-function setPanel(open) {
+function setPanel(open, returnFocus = false) {
+  const wasOpen = !$('#settings').hidden;
   $('#settings').hidden = !open;
   $('#settings-button').setAttribute('aria-expanded', String(open));
   if (world) { world.paused = open; world.resetInput(); }
   resetJoystick();
-  if (open) $('#close-settings').focus(); else world?.renderer.domElement.focus({ preventScroll: true });
+  // Keyboard users closing the dialog return to the button that opened it (WAI-ARIA);
+  // setZen() etc. no longer steal focus when the panel was not even open.
+  if (open) $('#close-settings').focus();
+  else if (wasOpen) (returnFocus ? $('#settings-button') : world?.renderer.domElement)?.focus({ preventScroll: true });
 }
 $('#settings-button').addEventListener('click', () => setPanel($('#settings').hidden));
-$('#close-settings').addEventListener('click', () => setPanel(false));
+$('#close-settings').addEventListener('click', () => setPanel(false, true));
 $('#world').addEventListener('pointerdown', () => { if (!$('#settings').hidden) setPanel(false); });
 $('#quality').value = settings.quality;
 $('#sensitivity').value = settings.sensitivity;
@@ -140,7 +144,7 @@ function setZen(value) {
 $('#hide-ui').addEventListener('click', () => setZen(true));
 $('#show-ui').addEventListener('click', () => setZen(false));
 window.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { if (!$('#settings').hidden) setPanel(false); if (document.body.classList.contains('zen')) setZen(false); }
+  if (e.key === 'Escape') { if (!$('#settings').hidden) setPanel(false, true); if (document.body.classList.contains('zen')) setZen(false); }
 });
 
 // Each control owns its pointer, allowing simultaneous movement and camera rotation.
