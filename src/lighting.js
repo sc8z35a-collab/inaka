@@ -62,6 +62,18 @@ export class HDRSuperLight {
       shadowBias: -.000015,
     });
     this.csm.fade = true;
+    // CSM snaps every cascade with one global map size. With per-cascade sizes the
+    // snap must use each light's own texel size, otherwise shadows shimmer while walking.
+    const csmUpdate = this.csm.update.bind(this.csm);
+    this.csm.update = () => {
+      const lights = this.csm.lights, frustums = this.csm.frustums, global = this.csm.shadowMapSize;
+      for (let i = 0; i < frustums.length; i++) {
+        this.csm.lights = [lights[i]]; this.csm.frustums = [frustums[i]];
+        this.csm.shadowMapSize = lights[i].shadow.mapSize.x;
+        csmUpdate();
+      }
+      this.csm.lights = lights; this.csm.frustums = frustums; this.csm.shadowMapSize = global;
+    };
     this.cascadeLights = [...this.csm.lights];
     // Only cascades illuminate the scene; do not multiply sunlight by five.
     world.sun.removeFromParent(); world.sun.target.removeFromParent();
@@ -111,10 +123,14 @@ export class HDRSuperLight {
         light.shadow.map?.dispose(); light.shadow.map = null;
       }
     }
-    const size = Math.min(this.enabled ? 4096 : 2048, this.world.renderer.capabilities.maxTextureSize);
-    this.csm.shadowMapSize = size;
-    for (const light of this.csm.lights) {
-      const cascadeSize = size;
+    // Four 4096^2 RGBA depth maps (~256 MB + depth buffers) exhausted GPU memory and
+    // lost the WebGL context on common laptops/phones. Only the nearest cascade needs
+    // 4K texels; distant cascades are drawn at progressively lower resolutions.
+    const max = this.world.renderer.capabilities.maxTextureSize;
+    const sizes = this.enabled ? [4096, 2048, 2048, 1024] : [2048, 2048];
+    this.csm.shadowMapSize = Math.min(sizes[0], max);
+    for (const [index, light] of this.csm.lights.entries()) {
+      const cascadeSize = Math.min(sizes[index] ?? sizes.at(-1), max);
       if (light.shadow.mapSize.x !== cascadeSize) {
         light.shadow.mapSize.set(cascadeSize, cascadeSize);
         light.shadow.map?.dispose(); light.shadow.map = null;

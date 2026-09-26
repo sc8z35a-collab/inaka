@@ -399,7 +399,14 @@ export class Countryside {
     window.addEventListener('keyup',e=>this.keys.delete(e.code));
     window.addEventListener('blur',()=>this.resetInput());
     document.addEventListener('visibilitychange',()=>{if(document.hidden)this.resetInput();});
-    canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.callbacks.onError?.('グラフィックの接続が中断されました。ページを再読み込みしてください。');});
+    canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.contextLost=true;this.callbacks.onContextLost?.();this.callbacks.onError?.('グラフィックの接続が中断されました。軽い描画で復帰を試みます。');});
+    canvas.addEventListener('webglcontextrestored',()=>{
+      this.contextLost=false;
+      // Restored contexts lose every GPU resource; recompile and redraw shadows at a lighter preset.
+      const fallback=this.quality==='hdr'||this.quality==='high'?'low':this.quality;
+      this.callbacks.onContextRestored?.(this.setQuality(fallback));
+      this.renderer.shadowMap.needsUpdate=true;
+    });
   }
   resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;}
   setWalking(value) {
@@ -468,7 +475,7 @@ export class Countryside {
     return result;
   }
   tick(){
-    const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden)return;
+    const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden||this.contextLost)return;
     this.elapsed+=dt;
     if(!this.paused)this.life.update(dt);
     this.windUniform.value=this.elapsed;this.windStrength.value=this.wind;

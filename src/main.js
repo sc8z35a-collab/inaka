@@ -143,6 +143,7 @@ requestAnimationFrame(() => setTimeout(() => {
     world = new Countryside($('#world'), {
       onReady: () => { document.body.classList.add('ready'); $('#world').dataset.ready = 'true'; },
       onError: message => toast(message),
+      onContextRestored: quality => { settings.quality = quality; $('#quality').value = quality; persist(); },
       onPosition: () => {
         if (!world) return;
         const yaw = ((world.yaw * 180 / Math.PI) % 360 + 360) % 360;
