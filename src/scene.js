@@ -38,7 +38,9 @@ export class Countryside {
     this.camera.lookAt(...spots[0].look);
     this.yaw = this.camera.rotation.y;
     this.pitch = this.camera.rotation.x;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+    // preserveDrawingBuffer forced an extra full-screen copy every frame (costly on tile GPUs);
+    // screenshot()/thumbnails() read the canvas synchronously right after rendering instead.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
