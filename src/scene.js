@@ -506,12 +506,17 @@ export class Countryside {
         const speed=this.speed*(this.keys.has('ShiftLeft')||this.keys.has('ShiftRight')?1.8:1)*dt;
         const dx=(-Math.sin(this.yaw)*forward+Math.cos(this.yaw)*side)*speed,dz=(-Math.cos(this.yaw)*forward-Math.sin(this.yaw)*side)*speed;
         const pos=this.camera.position;
-        const allowed=(x,z)=>!this.colliders.some(c=>colliderContains(c,x,z,.25))&&this.life.canEnter(x,z);
+        // A player already inside a blocked zone (crossing closed around them, a villager
+        // stepping close) was frozen forever. Blocked zones may always be left.
+        const trapped=!this.life.canEnter(pos.x,pos.z);
+        const allowed=(x,z)=>!this.colliders.some(c=>colliderContains(c,x,z,.25))&&(trapped||this.life.canEnter(x,z));
         if(allowed(pos.x+dx,pos.z))pos.x=clamp(pos.x+dx,-116,116);
         if(allowed(pos.x,pos.z+dz))pos.z=clamp(pos.z+dz,-106,126);
         pos.y=THREE.MathUtils.lerp(pos.y,surfaceHeight(pos.x,pos.z)+1.7+Math.sin(this.elapsed*7)*.023,Math.min(1,dt*10));
       }
     }
+    // Trains used to pass straight through a player standing on the rails.
+    if(!this.transition)this.life.clearTrack(this.camera.position,dt);
     this.camera.rotation.set(this.pitch,this.yaw,0,'YXZ');
     for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=Math.atan2(Math.cos(t)*d.radius,-Math.sin(t)*d.radius*.5)+Math.PI;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
     // Wrap clouds: before, every cloud slowly drifted out of the sky after a long visit.
