@@ -89,7 +89,8 @@ try {
       const w = window.__satoyama; w.transition = null;
       const x = w.life.cars[0].group.position.x + 3, z = -39 + .00072 * x * x;
       w.camera.position.set(x, 6, z);
-      await new Promise(r => setTimeout(r, 1500));
+      // Deterministic: SwiftShader ticks are too sparse to rely on real time here.
+      for (let i = 0; i < 45; i++) { w.life.update(1 / 30); w.life.clearTrack(w.camera.position, 1 / 30); }
       const p = w.camera.position; return [Math.abs(p.z - (-39 + .00072 * p.x * p.x)), x, z, p.x, p.z, w.paused, !!w.transition, document.hidden, w.elapsed];
     });
     assert.ok(r[0] > 1.8, `distance from rail centre ${JSON.stringify(r)}`);
