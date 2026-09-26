@@ -13,6 +13,7 @@ try {
   page.on('requestfailed', r => logs.push(['requestfailed', r.url()]));
   page.on('response', r => { if (r.status() >= 400) logs.push(['http' + r.status(), r.url()]); });
   if (process.env.QUALITY) await page.addInitScript(q => localStorage.setItem('satoyama-immersive', JSON.stringify({ quality: q, lightingVersion: 1 })), process.env.QUALITY);
+  if (process.env.INIT) await page.addInitScript(process.env.INIT);
   const t0 = Date.now();
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.body.classList.contains('ready') || document.querySelector('#retry'), null, { timeout: 180000 });
@@ -25,6 +26,7 @@ try {
       programs: w.renderer.info.programs?.length, glErr: gl.getError(), pos: w.camera.position.toArray().map(v => +v.toFixed(2)) };
   });
   console.log(JSON.stringify(state));
+  if (process.env.EVAL) console.log('EVAL:', JSON.stringify(await page.evaluate(process.env.EVAL)));
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
 } finally { await browser.close(); }
 for (const l of logs) console.log(l.join(' | '));
