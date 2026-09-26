@@ -518,11 +518,16 @@ export class Countryside {
   resize(){
     const w=Math.max(1,this.container.clientWidth),h=Math.max(1,this.container.clientHeight);
     this.mobile = matchMedia('(max-width: 760px)').matches;
-    this.camera.fov = this.mobile ? 64 : 59;
+    // Sideways phones are ~2.2:1; a 59-64 deg vertical FOV there becomes a 103-110 deg fisheye.
+    // Keep the horizontal field near 95 deg on ultra-wide screens, 59 deg vertical elsewhere.
+    const aspect = w / h;
+    this.camera.fov = aspect > 1.9 ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(47.5)) / aspect)) : this.mobile ? 64 : 59;
     // Keep UI at native resolution; only the 3D drawing buffer is scaled.
     // Re-evaluate DPR on resize (monitor changes and browser zoom included).
     // ULTRA targets a 4K-class buffer; HDR/high cap DPR at 2 (beyond that the gain is invisible).
-    const requestedRatio = this.quality === 'ultra' ? Math.max(devicePixelRatio, 3840 / Math.max(w, h))
+    // The frame governor only trims supersampling above the panel's native DPR, never below it.
+    const ultraRatio = Math.max(devicePixelRatio, 3840 / Math.max(w, h));
+    const requestedRatio = this.quality === 'ultra' ? Math.max(devicePixelRatio, ultraRatio * (this.supersample ?? 1))
       : this.quality === 'low' ? Math.min(devicePixelRatio, 1.5) * .9
       : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 2);
     // Bound allocations by both GPU limits and an 8.3 MP render budget.
@@ -535,6 +540,19 @@ export class Countryside {
     this.lighting?.resize(w,h);
   }
   render(){this.lighting.render();}
+  // ULTRA on phones: keep ~60 fps by adjusting only the supersampling factor (4K -> native DPR).
+  // Samples wall-clock frame time over 2 s windows; resizes at most every 3 s to avoid churn.
+  governResolution(dt){
+    if(this.quality!=='ultra'||this.paused||!this.ready){this.frameWindow=null;return;}
+    const now=performance.now(),win=this.frameWindow??={start:now,frames:0,changed:now};
+    win.frames++;
+    if(now-win.start<2000)return;
+    const fps=win.frames*1000/(now-win.start);win.start=now;win.frames=0;
+    if(now-win.changed<3000)return;
+    const current=this.supersample??1;
+    const next=fps<50?Math.max(.55,current-.1):fps>58.5&&current<1?Math.min(1,current+.05):current;
+    if(next!==current){this.supersample=next;win.changed=now;this.resize();this.callbacks.onResolution?.(this.renderResolution);}
+  }
   screenshot(){this.render();return this.renderer.domElement.toDataURL('image/png');}
   thumbnails(){
     const position=this.camera.position.clone(),rotation=this.camera.rotation.clone(),result=[];
@@ -607,6 +625,7 @@ export class Countryside {
       this.lastYaw=this.yaw;this.lastMapTick=Math.floor(this.navigationElapsed*5);this.callbacks.onPosition(this.camera.position);
     }
     this.render();
+    this.governResolution(dt);
     if(!this.ready){this.ready=true;this.callbacks.onReady?.();}
   }
 }

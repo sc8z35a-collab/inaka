@@ -19,7 +19,7 @@ const activeSpots = isPlains ? plainsSpots : originalSpots;
 const qualities = ['ultra', 'hdr', 'high', 'low', 'balanced'];
 const settings = {
   quality: qualities.includes(params.get('quality')) ? params.get('quality')
-    : saved.lightingVersion === 1 && qualities.includes(saved.quality) ? saved.quality : isPlains ? 'ultra' : 'hdr',
+    : saved.lightingVersion === 1 && qualities.includes(saved.quality) ? saved.quality : 'ultra',
   plainsDiscovered: Array.isArray(saved.plainsDiscovered) ? saved.plainsDiscovered.filter(i => Number.isInteger(i) && i >= 0 && i < plainsSpots.length) : [],
   travelMode: saved.travelMode === 'cycle' ? 'cycle' : 'walk',
   lightingVersion: 1,
@@ -367,6 +367,7 @@ requestAnimationFrame(() => setTimeout(() => {
       onReady: () => { document.body.classList.add('ready'); $('#world').dataset.ready = 'true'; },
       onError: message => toast(message),
       onSpot: index => { $('#viewpoint').value = String(index); toast(activeSpots[index].subtitle); },
+      onResolution: () => updateResolution(),
       onContextRestored: quality => { settings.quality = quality; $('#quality').value = quality; persist(); updateResolution(); },
       onPosition: () => {
         if (!world) return;
