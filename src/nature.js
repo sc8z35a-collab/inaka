@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { groundHeight, fieldAt, pathX, railZ, noise } from './terrain.js';
+import { groundHeight, fieldAt, pathX, railZ, noise, onPath } from './terrain.js';
 let seed = 87423;
 const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 const range = (a,b) => a + random() * (b-a);
@@ -116,7 +116,7 @@ function buildVerge(world){
   for(let i=0;i<9000;i++){
     let x=range(-115,115),z=range(-86,121);
     if(i<3300){z=range(-85,121);x=pathX(z)+(random()>.5?1:-1)*range(1.48,2.8);}
-    if(fieldAt(x,z,-.5)||Math.abs(x-pathX(z))<1.4||Math.abs(z-railZ(x))<2.5||Math.abs(z+29-1.3*Math.sin(x*.04))<1.5)continue;
+    if(fieldAt(x,z,-.5)||onPath(x,z,1.4)||Math.abs(z-railZ(x))<2.5||Math.abs(z+29-1.3*Math.sin(x*.04))<1.5)continue;
     if(world.colliders.some(t=>Math.hypot(x-t.x,z-t.z)<t.r))continue;
     points.push({x,z});
   }

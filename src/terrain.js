@@ -10,6 +10,10 @@ export function noise(x, y) {
 }
 export function fbm(x, y) { return noise(x, y) * .56 + noise(x * 2.03, y * 2.03) * .27 + noise(x * 4.07, y * 4.07) * .12 + noise(x * 8.11, y * 8.11) * .05; }
 export const pathX = z => 10 + 4.5 * Math.sin(z * .019) + 2 * Math.sin(z * .055);
+// The footpath used to run straight through the farmhouse at (10,-81) and out the back.
+// It now ends at that house's doorstep.
+export const PATH_NORTH_END = -75.4;
+export const onPath = (x, z, half) => z > PATH_NORTH_END && Math.abs(x - pathX(z)) < half;
 export const roadZ = x => -29 + 1.3 * Math.sin(x * .04);
 export const railZ = x => -39 + .00072 * x * x;
 export const railHeight = x => 4.5 + .002 * x;
@@ -28,6 +32,9 @@ export function groundHeight(x, z) {
   if (f) {
     const outside = Math.max(f.x1 - x, x - f.x2, f.z1 - z, z - f.z2, 0);
     y = THREE.MathUtils.lerp(f.y, y + .18, smooth(outside / 2.2));
+    // Levee (畦): the water sits at f.y+.11, but the ground just outside a paddy used to be
+    // at f.y, so water edges floated in mid-air (up to 0.3 m on the lowest terraces).
+    if (outside > 0) y = Math.max(y, f.y + .26 * smooth(outside / .45) * (1 - smooth((outside - 1.6) / .6)));
   }
   // Individual ridges and valleys, rather than a single smooth bowl.
   const edge = Math.max(smooth((-z - 84) / 160), smooth((Math.abs(x) - 118) / 135), smooth((z - 133) / 175));
@@ -46,7 +53,7 @@ export function groundHeight(x, z) {
 // Shared rendered walking surface; paths do not clamp negative terrace heights.
 export function surfaceHeight(x,z) {
   let y=groundHeight(x,z);
-  if(Math.abs(x-pathX(z))<1.375 || Math.abs(z-roadZ(x))<1.65) y+=.24;
+  if(onPath(x,z,1.375) || Math.abs(z-roadZ(x))<1.65) y+=.24;
   if(Math.abs(x-pathX(z))<1.5 && z>3.3 && z<6.5) y=Math.max(y,groundHeight(x,z)+.355);
   if(Math.abs(x-pathX(-39))<2.5 && Math.abs(z-railZ(pathX(-39)))<1.8) y=Math.max(y,railHeight(x)+.06);
   return y;

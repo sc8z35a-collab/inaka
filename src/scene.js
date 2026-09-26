@@ -206,7 +206,7 @@ export class Countryside {
   }
   buildPaths() {
     const path=[],side=[];
-    for(let z=126;z>=-106;z-=1)path.push([this.pathX(z),z]);
+    for(let z=126;z>=-75;z-=1)path.push([this.pathX(z),z]);path.push([this.pathX(-75.4),-75.4]);
     // Ribbon UVs are metric (1 tile / 4 m); the terrain's 75x repeat made verges shimmer.
     const vergeMap=this.groundTexture('grass');
     const verge=new THREE.MeshStandardMaterial({color:0x6f8543,roughness:1,map:vergeMap});
