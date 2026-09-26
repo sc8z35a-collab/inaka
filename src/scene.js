@@ -349,7 +349,8 @@ export class Countryside {
     const dummy=new THREE.Object3D(),color=new THREE.Color();
     const rocks=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),this.materials.stone,620);
     for(let i=0;i<620;i++){
-      const z=range(-64,127),x=this.pathX(z)+(rand()>.5?1:-1)*range(1.6,2.3);
+      const z=range(-64,127);let x=this.pathX(z)+(rand()>.5?1:-1)*range(1.6,2.3);
+      if(fieldAt(x,z))x=2*this.pathX(z)-x; // Where the path grazes a paddy, keep stones on the dry verge.
       dummy.position.set(x,groundHeight(x,z)+range(.12,.23),z);dummy.scale.set(range(.04,.18),range(.04,.13),range(.05,.19));dummy.rotation.set(rand()*3,rand()*3,rand()*3);dummy.updateMatrix();rocks.setMatrixAt(i,dummy.matrix);color.setHSL(.13,.07,range(.34,.6));rocks.setColorAt(i,color);
     }rocks.receiveShadow=true;this.scene.add(rocks);
     // Wildflowers and weeds follow the banks, rather than being scattered in the water.
@@ -357,7 +358,8 @@ export class Countryside {
     const weeds=new THREE.InstancedMesh(blade,new THREE.MeshStandardMaterial({color:0x6e8b31,side:THREE.DoubleSide,roughness:1}),8000);
     const flowers=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.045,0),new THREE.MeshStandardMaterial({color:0xf4eed1,roughness:1}),700);
     for(let i=0;i<8000;i++){
-      const z=range(-64,130),x=this.pathX(z)+(rand()>.5?1:-1)*range(1.55,2.34);
+      const z=range(-64,126);let x=this.pathX(z)+(rand()>.5?1:-1)*range(1.55,2.34);
+      if(fieldAt(x,z))x=2*this.pathX(z)-x;
       dummy.position.set(x,groundHeight(x,z)+.17,z);dummy.rotation.set(range(-.4,.4),range(0,6.2),range(-.45,.45));dummy.scale.setScalar(range(.45,1.2));dummy.updateMatrix();weeds.setMatrixAt(i,dummy.matrix);
       if(i<700){dummy.position.y+=range(.2,.4);dummy.scale.setScalar(range(.6,1.3));dummy.updateMatrix();flowers.setMatrixAt(i,dummy.matrix);}
     }this.scene.add(weeds,flowers);
