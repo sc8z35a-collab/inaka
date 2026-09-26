@@ -96,21 +96,31 @@ $('#quality').addEventListener('change', e => { settings.quality = e.target.valu
 $('#sensitivity').addEventListener('input', e => { settings.sensitivity = Number(e.target.value); if (world) world.sensitivity = settings.sensitivity; persist(); });
 $('#volume').addEventListener('input', e => { settings.volume = Number(e.target.value); audio.volume(settings.volume); persist(); });
 $('#time-of-day').addEventListener('change',e=>{world?.setTime(e.target.value);$('#time-label').textContent={morning:'07:00',day:'14:32',evening:'17:30'}[e.target.value];});
-$('#viewpoint').addEventListener('change',e=>{world?.goTo(Number(e.target.value),true);setPanel(false);});
-$('#reset-position').addEventListener('click', () => { setPanel(false); world?.goTo(0, true); toast('いつものあぜ道へ。'); });
+$('#viewpoint').addEventListener('change',e=>{
+  world?.goTo(Number(e.target.value),true);setPanel(false);
+  toast(`${e.target.selectedOptions[0].textContent}へ。`);
+});
+$('#reset-position').addEventListener('click', () => { setPanel(false); world?.goTo(0, true); $('#viewpoint').value = '0'; toast('いつものあぜ道へ。'); });
 $('.brand').addEventListener('click', e => { e.preventDefault(); world?.renderer.domElement.focus({ preventScroll: true }); });
+// Safari/iPadOS only expose the prefixed API; previously the button did nothing there.
+const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
 $('#fullscreen').addEventListener('click', async () => {
+  const root = document.documentElement;
   try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+    if (fullscreenElement()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else if (root.requestFullscreen) await root.requestFullscreen();
+    else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
     else toast('スマホを横向きにすると、より広い景色を楽しめます。');
   } catch { toast('別のタブで開くと、全画面を利用できます。'); }
 });
-document.addEventListener('fullscreenchange', () => {
-  const enabled = !!document.fullscreenElement;
+const onFullscreenChange = () => {
+  const enabled = !!fullscreenElement();
   $('#fullscreen').innerHTML = `<i data-lucide="${enabled ? 'minimize' : 'maximize'}"></i>`;
-  $('#fullscreen').setAttribute('aria-label', enabled ? '全画面を終了' : '全画面表示'); icons();
-});
+  $('#fullscreen').setAttribute('aria-label', enabled ? '全画面を終了' : '全画面表示');
+  $('#fullscreen').title = enabled ? '全画面を終了' : '全画面表示'; icons();
+};
+document.addEventListener('fullscreenchange', onFullscreenChange);
+document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 function setZen(value) {
   setPanel(false); document.body.classList.toggle('zen', value); $('#show-ui').hidden = !value;
   $('.hud').inert = value; $('.bottom-hud').inert = value;
