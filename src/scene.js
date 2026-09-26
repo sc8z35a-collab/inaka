@@ -490,8 +490,10 @@ export class Countryside {
     const dt=Math.min(this.clock.getDelta(),.06);if(document.hidden||this.contextLost)return;
     this.elapsed+=dt;
     if(!this.paused)this.life.update(dt);
-    this.windUniform.value=this.elapsed;this.windStrength.value=this.wind;
-    this.water.material.normalMap.offset.set(this.elapsed*.003*this.wind,this.elapsed*.002*this.wind);
+    // Keep shader time small: float32 precision in GLSL makes wind jitter after hours.
+    // 2π·1000 s is a common period of every sin/cos term used by the rice shader.
+    this.windUniform.value=this.elapsed%(Math.PI*2000);this.windStrength.value=this.wind;
+    this.water.material.normalMap.offset.set((this.elapsed*.003*this.wind)%1,(this.elapsed*.002*this.wind)%1);
     if(this.transition&&!this.paused){
       const t=this.transition;t.elapsed+=dt;const a=smooth(t.elapsed/t.duration);
       this.camera.position.lerpVectors(t.start,t.end,a);this.yaw=THREE.MathUtils.lerp(t.startYaw,t.endYaw,a);this.pitch=THREE.MathUtils.lerp(t.startPitch,t.endPitch,a);
@@ -511,8 +513,9 @@ export class Countryside {
       }
     }
     this.camera.rotation.set(this.pitch,this.yaw,0,'YXZ');
-    for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=-t;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
-    this.clouds.forEach((c,i)=>c.position.x+=dt*.13*(1+i%3));
+    for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=Math.atan2(Math.cos(t)*d.radius,-Math.sin(t)*d.radius*.5)+Math.PI;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
+    // Wrap clouds: before, every cloud slowly drifted out of the sky after a long visit.
+    this.clouds.forEach((c,i)=>{c.position.x+=dt*.13*(1+i%3);if(c.position.x>760)c.position.x-=1520;});
     if(this.callbacks.onPosition&&Math.floor(this.elapsed*5)!==this.lastMapTick){this.lastMapTick=Math.floor(this.elapsed*5);this.callbacks.onPosition(this.camera.position);}
     this.render();
     if(!this.ready){this.ready=true;this.callbacks.onReady?.();}
