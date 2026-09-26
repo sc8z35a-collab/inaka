@@ -39,7 +39,7 @@ export class Countryside {
     this.yaw = this.camera.rotation.y;
     this.pitch = this.camera.rotation.x;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
-    this.renderer.setPixelRatio(devicePixelRatio);
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // Lighting refreshes animated shadows at the selected quality cadence.
@@ -82,6 +82,9 @@ export class Countryside {
     this.resize();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
+    // Moving the window to another monitor / zooming changes DPR without resizing the element.
+    const watchRatio=()=>{const query=matchMedia(`(resolution: ${devicePixelRatio}dppx)`);query.addEventListener('change',()=>{this.resize();watchRatio();},{once:true});};
+    watchRatio();
     this.clock = new THREE.Clock();
     this.renderer.setAnimationLoop(() => this.tick());
   }
@@ -478,8 +481,9 @@ export class Countryside {
     const w=Math.max(1,this.container.clientWidth),h=Math.max(1,this.container.clientHeight);
     // Keep UI at native resolution; only the 3D drawing buffer is scaled.
     // Re-evaluate DPR on resize (monitor changes and browser zoom included).
+    // DPR 3 phones allocated 9x-sized MSAA HDR buffers; beyond 2x the gain is invisible.
     const ratio = this.quality === 'low' ? Math.min(devicePixelRatio, 1.5) * .9
-      : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : devicePixelRatio;
+      : this.quality === 'balanced' ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 2);
     this.renderer.setPixelRatio(ratio);
     this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
     this.lighting?.resize(w,h);

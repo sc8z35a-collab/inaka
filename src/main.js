@@ -42,7 +42,9 @@ class NatureAudio {
     }
     this.enabled = !this.enabled;
     clearTimeout(this.suspendTimer);
-    if (this.enabled) await this.ctx.resume();
+    if (this.enabled) {
+      try { await this.ctx.resume(); } catch (error) { this.enabled = false; throw error; }
+    }
     this.master.gain.setTargetAtTime(this.enabled ? settings.volume : 0, this.ctx.currentTime, .4);
     if (this.enabled) this.scheduleBird();
     else {
