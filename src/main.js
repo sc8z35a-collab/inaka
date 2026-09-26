@@ -39,9 +39,16 @@ class NatureAudio {
         gain.gain.value = volume; source.connect(filter); filter.connect(gain); gain.connect(this.master); source.start();
       }
     }
-    await this.ctx.resume(); this.enabled = !this.enabled;
+    this.enabled = !this.enabled;
+    clearTimeout(this.suspendTimer);
+    if (this.enabled) await this.ctx.resume();
     this.master.gain.setTargetAtTime(this.enabled ? settings.volume : 0, this.ctx.currentTime, .4);
-    if (this.enabled) this.scheduleBird(); else clearTimeout(this.timer);
+    if (this.enabled) this.scheduleBird();
+    else {
+      clearTimeout(this.timer);
+      // Muted noise sources kept burning CPU/battery; suspend after the fade-out.
+      this.suspendTimer = setTimeout(() => { if (!this.enabled) this.ctx.suspend().catch(() => {}); }, 2000);
+    }
     $('#sound').innerHTML = `<i data-lucide="${this.enabled ? 'volume-2' : 'volume-x'}"></i>`;
     $('#sound').setAttribute('aria-pressed', String(this.enabled));
     $('#sound').setAttribute('aria-label', `環境音を${this.enabled ? 'オフ' : 'オン'}にする`);
@@ -50,6 +57,8 @@ class NatureAudio {
   scheduleBird() {
     clearTimeout(this.timer);
     if (!this.enabled) return;
+    // Hidden tabs: skip this chirp (the context is suspended) but keep the schedule alive.
+    if (document.hidden || this.ctx.state !== 'running') { this.timer = setTimeout(() => this.scheduleBird(), 4000); return; }
     const now = this.ctx.currentTime + .1, base = 1900 + Math.random() * 900;
     for (let j = 0; j < 3; j++) {
       const start = now + j * .18, osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
