@@ -7,7 +7,11 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "build:pages": "vite build --base=/inaka/docs/ --outDir=docs"
+    "build:pages": "vite build --base=/inaka/docs/ --outDir=docs",
+    "agents:preflight": "node pipeline/agents.mjs --preflight",
+    "agents:run": "node pipeline/agents.mjs --browser",
+    "agents:gates": "node pipeline/agents.mjs --offline",
+    "test:mobile": "node tests/mobile-smoke.mjs"
   },
   "dependencies": {
     "three": "^0.180.0",

@@ -85,6 +85,16 @@ const GATES = [
   { name: 'logic', cmd: 'node tests/logic.mjs' },
   { name: 'mobile-smoke', cmd: 'node tests/mobile-smoke.mjs', optional: !flag('--browser') },
 ];
+// The browser gate needs a dev server; reuse one on :3000 or start a private one.
+async function ensureServer() {
+  if (!flag('--browser')) return;
+  const up = () => fetch('http://localhost:3000/').then(r => r.ok, () => false);
+  if (await up()) return;
+  const { spawn } = await import('node:child_process');
+  const child = spawn('npx', ['vite', '--host', '127.0.0.1', '--port', '3000', '--strictPort'], { cwd: root, stdio: 'ignore', detached: true });
+  child.unref(); process.on('exit', () => { try { process.kill(-child.pid); } catch {} });
+  for (let i = 0; i < 60 && !(await up()); i++) await new Promise(r => setTimeout(r, 500));
+}
 function runGates() {
   const results = [];
   for (const gate of GATES) {
@@ -126,6 +136,7 @@ async function runAgent(agent, goal) {
 async function main() {
   const reportDir = join(root, '.artifacts/pipeline'); mkdirSync(reportDir, { recursive: true });
   const report = { started: new Date().toISOString(), agents: [], gates: null };
+  await ensureServer();
   if (flag('--preflight')) { report.preflight = await preflight(); }
   else if (flag('--offline')) { report.gates = runGates(); console.log(JSON.stringify(report.gates, null, 1)); }
   else {
