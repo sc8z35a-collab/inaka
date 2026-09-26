@@ -8,6 +8,7 @@ try {
   const page = await browser.newPage({ viewport: { width: Number(process.env.W || 960), height: Number(process.env.H || 540) } });
   page.setDefaultTimeout(180000);
   await page.route('https://fonts.**/**', r => r.fulfill({ body: '', contentType: 'text/css' }));
+  page.on('crash', () => logs.push(['CRASH', 'renderer process crashed']));
   page.on('pageerror', e => logs.push(['pageerror', e.message]));
   page.on('console', m => { if (['error', 'warning'].includes(m.type())) logs.push([m.type(), m.text().slice(0, 400)]); });
   page.on('requestfailed', r => logs.push(['requestfailed', r.url()]));
