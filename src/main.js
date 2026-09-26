@@ -126,7 +126,8 @@ function updateJoystick(e) {
 joystick.addEventListener('pointerdown', e => { if (joyPointer !== null) return; e.preventDefault(); joyPointer = e.pointerId; joystick.setPointerCapture(e.pointerId); updateJoystick(e); });
 joystick.addEventListener('pointermove', e => { if (e.pointerId === joyPointer) updateJoystick(e); });
 function resetJoystick() { joyPointer = null; thumb.style.transform = ''; if (world) world.joy.x = world.joy.y = 0; }
-for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) joystick.addEventListener(event, resetJoystick);
+// A second finger lifting from the joystick must not reset the finger still steering.
+for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) joystick.addEventListener(event, e => { if (e.pointerId === joyPointer) resetJoystick(); });
 window.addEventListener('blur', resetJoystick);
 const look = $('#look-pad'); let lookPointer = null;
 look.addEventListener('pointerdown', e => { if (lookPointer) return; e.preventDefault(); lookPointer = { id: e.pointerId, x: e.clientX, y: e.clientY }; look.setPointerCapture(e.pointerId); });
@@ -136,7 +137,7 @@ look.addEventListener('pointermove', e => {
   world.pitch = Math.max(-1.18, Math.min(1.1, world.pitch - (e.clientY - lookPointer.y) * .0024 * settings.sensitivity));
   lookPointer.x = e.clientX; lookPointer.y = e.clientY;
 });
-for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) look.addEventListener(event, () => { lookPointer = null; });
+for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) look.addEventListener(event, e => { if (lookPointer?.id === e.pointerId) lookPointer = null; });
 
 requestAnimationFrame(() => setTimeout(() => {
   try {

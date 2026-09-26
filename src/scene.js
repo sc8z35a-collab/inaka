@@ -376,7 +376,8 @@ export class Countryside {
   bindControls() {
     const canvas=this.renderer.domElement;let drag=null;
     canvas.addEventListener('pointerdown',e=>{
-      if(this.paused)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);canvas.style.cursor='grabbing';
+      // Ignore secondary pointers/buttons: a second finger must not steal the drag.
+      if(this.paused||drag||e.button>0)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY};canvas.setPointerCapture(e.pointerId);canvas.style.cursor='grabbing';
     });
     canvas.addEventListener('pointermove',e=>{
       if(!drag||drag.id!==e.pointerId||this.paused)return;
@@ -385,10 +386,17 @@ export class Countryside {
       this.pitch=clamp(this.pitch-(e.clientY-drag.y)*.0024*(this.sensitivity??.8),-1.18,1.1);
       drag.x=e.clientX;drag.y=e.clientY;
     });
-    const release=()=>{drag=null;canvas.style.cursor='grab';};
-    canvas.addEventListener('pointerup',release);canvas.addEventListener('pointercancel',release);canvas.style.cursor='grab';
+    // Only the pointer that started the drag may end it (multi-touch safety).
+    const release=e=>{if(drag&&e.pointerId!==drag.id)return;drag=null;canvas.style.cursor='grab';};
+    for(const type of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(type,release);canvas.style.cursor='grab';
+    this.releaseDrag=()=>{drag=null;canvas.style.cursor='grab';};
     window.addEventListener('keydown',e=>{
-      if(this.paused||e.target.matches('input,button,a,select,textarea'))return;
+      // Buttons keep focus after a click; movement keys must still walk. Only text-entry
+      // controls (and selects/ranges, which use arrows) keep their own keyboard handling.
+      if(this.paused||e.target.matches?.('input,select,textarea,[contenteditable]'))return;
+      // Browser shortcuts (Ctrl/Cmd+S, Ctrl+D...) are not movement, and their keyup is often lost.
+      if(e.ctrlKey||e.metaKey||e.altKey)return;
+      if(e.target.matches?.('button,a')&&e.code.startsWith('Arrow'))return;
       if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight'].includes(e.code)){
         e.preventDefault();
         if (!this.walking) this.setWalking(true);
@@ -396,7 +404,11 @@ export class Countryside {
         this.keys.add(e.code);
       }
     });
-    window.addEventListener('keyup',e=>this.keys.delete(e.code));
+    window.addEventListener('keyup',e=>{
+      this.keys.delete(e.code);
+      // macOS never sends keyup for keys released while Cmd is held.
+      if(e.key==='Meta')this.keys.clear();
+    });
     window.addEventListener('blur',()=>this.resetInput());
     document.addEventListener('visibilitychange',()=>{if(document.hidden)this.resetInput();});
     canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();this.contextLost=true;this.callbacks.onContextLost?.();this.callbacks.onError?.('グラフィックの接続が中断されました。軽い描画で復帰を試みます。');});
@@ -408,7 +420,7 @@ export class Countryside {
       this.renderer.shadowMap.needsUpdate=true;
     });
   }
-  resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;}
+  resetInput(){this.keys.clear();this.joy.x=this.joy.y=0;this.releaseDrag?.();}
   setWalking(value) {
     this.walking=value;this.resetInput();this.callbacks.onWalking?.(value);
     if(value){this.transition={start:this.camera.position.clone(),end:new THREE.Vector3(this.camera.position.x,surfaceHeight(this.camera.position.x,this.camera.position.z)+1.7,this.camera.position.z),startYaw:this.yaw,endYaw:this.yaw,startPitch:this.pitch,endPitch:0,elapsed:0,duration:1.5};}
