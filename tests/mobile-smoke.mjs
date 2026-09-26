@@ -31,6 +31,12 @@ try {
     await page.evaluate(() => { const w = window.__satoyama; w.tick(); });
     await page.waitForFunction(() => document.body.classList.contains('ready'));
     const tag = `${width}x${height}`;
+    await check(`${tag} start gate offers fullscreen`, async () => {
+      assert.equal(await page.isVisible('#start-button'), true);
+      assert.equal(await page.isVisible('#rotate-hint'), false);
+      await page.click('#start-windowed');
+      assert.equal(await page.isVisible('#start-gate'), false);
+    });
     await check(`${tag} HUD inside viewport`, async () => {
       const out = await page.evaluate(() => [...document.querySelectorAll('.hud .brand, .actions, #joystick, #look-pad, .compass, #map-badge, #journey, .moment p')]
         .filter(e => e.offsetParent !== null && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).opacity !== '0')
@@ -70,6 +76,12 @@ try {
     const img = await page.evaluate(() => { const w = window.__satoyama; w.render(); return w.renderer.domElement.toDataURL('image/jpeg', .8); });
     writeFileSync(`.artifacts/mobile-${tag}.jpg`, Buffer.from(img.split(',')[1], 'base64'));
     await page.screenshot({ path: `.artifacts/mobile-ui-${tag}.png` }).catch(() => {});
+    await check(`${tag} portrait shows rotate hint`, async () => {
+      await page.setViewportSize({ width: height, height: width });
+      assert.equal(await page.isVisible('#rotate-hint'), true);
+      await page.setViewportSize({ width, height });
+      assert.equal(await page.isVisible('#rotate-hint'), false);
+    });
     await context.close();
   }
 } finally { await browser.close(); }
