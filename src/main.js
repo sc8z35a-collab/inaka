@@ -174,6 +174,7 @@ look.addEventListener('pointermove', e => {
 });
 for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) look.addEventListener(event, e => { if (lookPointer?.id === e.pointerId) lookPointer = null; });
 
+const compassLabels = document.querySelectorAll('.compass > span:not(.compass-tick)');
 requestAnimationFrame(() => setTimeout(() => {
   try {
     world = new Countryside($('#world'), {
@@ -184,7 +185,7 @@ requestAnimationFrame(() => setTimeout(() => {
         if (!world) return;
         const yaw = ((world.yaw * 180 / Math.PI) % 360 + 360) % 360;
         const names = ['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'], index = Math.round(yaw / 45) % 8;
-        const [left, center, right] = document.querySelectorAll('.compass > span:not(.compass-tick)');
+        const [left, center, right] = compassLabels;
         // Side labels previously stayed "W"/"E" even when facing south.
         center.textContent = names[index]; left.textContent = names[(index + 2) % 8]; right.textContent = names[(index + 6) % 8];
       },
@@ -199,7 +200,11 @@ requestAnimationFrame(() => setTimeout(() => {
     if (import.meta.env.DEV) window.__satoyama = world;
   } catch (error) {
     console.error('Countryside initialization failed:', error);
-    $('#loading').innerHTML = '<span>3Dの風景を表示できませんでした。</span><span style="font-size:11px;max-width:280px;text-align:center;line-height:2">WebGL 2 対応の最新版 Chrome / Safari でお試しください。</span><button id="retry">もう一度読み込む</button>';
+    // A half-built world kept rendering (and holding the GPU) behind the error message.
+    try { world?.renderer.setAnimationLoop(null); world?.renderer.dispose(); } catch { /* already broken */ }
+    world = null;
+    document.body.classList.remove('ready');
+    $('#loading').innerHTML = '<span>3Dの風景を表示できませんでした。</span><span style="font-size:11px;max-width:280px;text-align:center;line-height:2">WebGL 2 対応の最新版 Chrome / Safari でお試しください。</span><button id="retry" class="reset-button" style="width:auto;padding:10px 22px;color:#51664e">もう一度読み込む</button>';
     $('#retry').addEventListener('click', () => location.reload());
   }
 }, 80));
