@@ -154,7 +154,10 @@ export class HDRSuperLight {
     if (this.composer) {
       this.bloom.enabled = this.enabled;
       for (const target of [this.composer.renderTarget1, this.composer.renderTarget2]) {
-        const samples = this.enabled ? Math.min(value === 'ultra' ? 2 : 4, this.world.renderer.capabilities.maxSamples) : 0;
+        // LOW also renders through the composer, whose render targets bypass the canvas'
+        // antialias flag: without MSAA every edge was jagged and foliage shimmered.
+        const wanted = this.enabled ? (value === 'ultra' ? 2 : 4) : this.low ? 2 : 0;
+        const samples = Math.min(wanted, this.world.renderer.capabilities.maxSamples);
         if (target.samples !== samples) { target.dispose(); target.samples = samples; }
       }
     }
@@ -196,6 +199,8 @@ export class HDRSuperLight {
     w.camera.updateMatrixWorld();
     const now = performance.now();
     const moved = !this.shadowPosition.equals(w.camera.position) || !this.shadowRotation.equals(w.camera.quaternion);
+    // Skip all work while the GPU context is gone (renders would only log errors).
+    if (w.renderer.getContext().isContextLost?.()) return;
     // Never move CSM matrices without redrawing their maps: cached maps would swim.
     // Camera motion, resize, quality/time changes and texture loads invalidate immediately.
     // Only stationary LOW views reuse shadows between 30 Hz animation updates.

@@ -1,10 +1,11 @@
 import './style.css';
-import { createIcons, VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan, Map, Camera, Footprints, Bike } from 'lucide';
+import { createIcons, VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan, Map as MapIcon, Camera, Footprints, Bike } from 'lucide';
+// lucide's `Map` icon used to shadow the global Map constructor in this module.
 import { Countryside, spots as originalSpots } from './scene.js';
 import { plainsFields, plainsSpots, plainsBounds } from './plains.js';
 
 const $ = selector => document.querySelector(selector);
-const icons = () => createIcons({ icons: { VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan, Map, Camera, Footprints, Bike } });
+const icons = () => createIcons({ icons: { VolumeX, Volume2, SlidersHorizontal, Maximize, Minimize, Sun, Sunrise, Sunset, Sprout, MoveUp, X, MapPin, Scan, Map: MapIcon, Camera, Footprints, Bike } });
 icons();
 let world, toastTimer;
 let saved = {};
@@ -35,8 +36,15 @@ function toast(message) {
 
 // Quiet wind, water and birds are synthesized locally. Nothing plays without consent.
 class NatureAudio {
-  constructor() { this.enabled = false; this.ctx = null; this.timer = null; }
+  constructor() { this.enabled = false; this.ctx = null; this.timer = null; this.busy = false; }
+  // A double tap while resume() was pending flipped the state twice and desynchronised the
+  // button, the gain and the bird scheduler.
   async toggle() {
+    if (this.busy) return;
+    this.busy = true;
+    try { await this.flip(); } finally { this.busy = false; }
+  }
+  async flip() {
     if (!this.ctx) {
       const Audio = window.AudioContext || window.webkitAudioContext;
       if (!Audio) { toast('このブラウザは環境音に対応していません。'); return; }
@@ -56,6 +64,8 @@ class NatureAudio {
     clearTimeout(this.suspendTimer);
     if (this.enabled) {
       try { await this.ctx.resume(); } catch (error) { this.enabled = false; throw error; }
+      // Enabling while the tab is hidden must not leave the context running in the background.
+      if (document.hidden) this.ctx.suspend().catch(() => {});
     }
     this.master.gain.setTargetAtTime(this.enabled ? settings.volume : 0, this.ctx.currentTime, .4);
     if (this.enabled) this.scheduleBird();
@@ -85,7 +95,13 @@ class NatureAudio {
     }
     this.timer = setTimeout(() => this.scheduleBird(), 4500 + Math.random() * 7000);
   }
-  volume(value) { if (this.ctx && this.enabled) this.master.gain.setTargetAtTime(value, this.ctx.currentTime, .1); }
+  volume(value) {
+    if (!this.ctx || !this.enabled) return;
+    // Dragging the slider queued dozens of overlapping setTarget events; start from the
+    // current value so the level follows the slider instead of lagging behind.
+    const gain = this.master.gain, now = this.ctx.currentTime;
+    gain.cancelScheduledValues(now); gain.setValueAtTime(gain.value, now); gain.setTargetAtTime(value, now, .1);
+  }
 }
 const audio = new NatureAudio();
 $('#sound').addEventListener('click', () => audio.toggle().catch(() => toast('音声を再生できませんでした。もう一度お試しください。')));
@@ -110,28 +126,46 @@ $('#settings-button').addEventListener('click', () => setPanel($('#settings').hi
 $('#close-settings').addEventListener('click', () => setPanel(false, true));
 $('#world').addEventListener('pointerdown', () => { if (!$('#settings').hidden) setPanel(false); });
 $('#quality').value = settings.quality;
+// The time selector and HUD clock showed 'day' until the 3D world finished building.
+$('#time-of-day').value = settings.time;
 $('#sensitivity').value = settings.sensitivity;
 $('#volume').value = settings.volume;
-$('#quality').addEventListener('change', e => { settings.quality = e.target.value; const actual=world?.setQuality(settings.quality); if(actual) settings.quality=actual; $('#quality').value=settings.quality; updateResolution(); persist(); });
-$('#sensitivity').addEventListener('input', e => { settings.sensitivity = Number(e.target.value); if (world) world.sensitivity = settings.sensitivity; persist(); });
-$('#volume').addEventListener('input', e => { settings.volume = Number(e.target.value); audio.volume(settings.volume); persist(); });
+$('#quality').addEventListener('change', e => {
+  settings.quality = e.target.value;
+  const actual = world?.setQuality(settings.quality); if (actual) settings.quality = actual;
+  $('#quality').value = settings.quality; updateResolution(); persist();
+});
+// Sliders apply live but write storage once per gesture (was a synchronous write per pixel).
+$('#sensitivity').addEventListener('input', e => { settings.sensitivity = Number(e.target.value); if (world) world.sensitivity = settings.sensitivity; });
+$('#volume').addEventListener('input', e => { settings.volume = Number(e.target.value); audio.volume(settings.volume); });
+for (const id of ['#sensitivity', '#volume']) $(id).addEventListener('change', persist);
 function applyTime(value) {
-  world?.setTime(value);
+  // setTime() regenerates the PMREM environment; the constructor already built 'day', so
+  // start-up used to render the sky environment twice.
+  if (world && world.timeOfDay !== value) world.setTime(value);
   $('#time-label').textContent = { morning: '07:00', day: '14:32', evening: '17:30' }[value];
   // The HUD always showed a midday sun, even at dawn or dusk.
   const icon = document.querySelector('.sun-icon');
   icon.outerHTML = `<i data-lucide="${{ morning: 'sunrise', day: 'sun', evening: 'sunset' }[value]}" class="sun-icon"></i>`;
   icons();
 }
+applyTime(settings.time);
 $('#time-of-day').addEventListener('change', e => { applyTime(e.target.value); settings.time = e.target.value; persist(); });
-$('#viewpoint').addEventListener('change',e=>{
-  world?.goTo(Number(e.target.value),true);setPanel(false);
+$('#viewpoint').addEventListener('change', e => {
+  world?.goTo(Number(e.target.value), true); setPanel(false);
+});
+// A <select> never fires 'change' for the option that is already selected, so returning to
+// the current spot after walking away was impossible with the keyboard. Enter re-travels there.
+$('#viewpoint').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); world?.goTo(Number(e.target.value), true); setPanel(false); }
 });
 $('#reset-position').addEventListener('click', () => { setPanel(false); world?.goTo(0, true); $('#viewpoint').value = '0'; toast(isPlains ? '見晴らしの丘へ。' : 'いつものあぜ道へ。'); });
 $('.brand').addEventListener('click', e => { e.preventDefault(); world?.renderer.domElement.focus({ preventScroll: true }); });
 const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
 let fullscreenBusy = false;
 function syncFullscreen() {
+  // Real fullscreen that arrived late (after the fallback kicked in) supersedes the fallback.
+  if (fullscreenElement()) document.body.classList.remove('fullscreen-fallback');
   const enabled = !!fullscreenElement() || document.body.classList.contains('fullscreen-fallback');
   const label = enabled ? '全画面を終了' : '全画面表示';
   $('#fullscreen').innerHTML = `<i data-lucide="${enabled ? 'minimize' : 'maximize'}"></i>`;
@@ -147,6 +181,8 @@ async function toggleFullscreen() {
   try {
     if (fullscreenElement()) {
       const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      // Leaving fullscreen kept the landscape lock on Android until the tab was closed.
+      try { screen.orientation?.unlock?.(); } catch { /* not locked */ }
       await exit.call(document);
     } else if (document.body.classList.contains('fullscreen-fallback')) {
       document.body.classList.remove('fullscreen-fallback');
@@ -154,6 +190,10 @@ async function toggleFullscreen() {
       const root = document.documentElement, request = root.requestFullscreen || root.webkitRequestFullscreen;
       if (!request) throw new Error('Fullscreen API unavailable');
       await request.call(root, { navigationUI: 'hide' });
+      // webkitRequestFullscreen returns nothing and fails silently (iOS Safari on iPhone):
+      // without this check the UI claimed fullscreen while nothing happened.
+      if (!fullscreenElement()) await new Promise(resolve => setTimeout(resolve, 250));
+      if (!fullscreenElement()) throw new Error('Fullscreen request ignored');
       await lockLandscape();
     }
   } catch {
@@ -172,9 +212,18 @@ async function lockLandscape() {
   try { await screen.orientation?.lock?.('landscape'); } catch { /* unsupported or not permitted */ }
 }
 const touchDevice = matchMedia('(pointer: coarse)').matches;
-function closeStartGate() { $('#start-gate').hidden = true; document.body.classList.remove('gate-open'); world?.renderer.domElement.focus({ preventScroll: true }); }
-if (touchDevice && !fullscreenElement() && !matchMedia('(display-mode: fullscreen)').matches && !params.has('nogate')) {
+// The modal start gate left the HUD focusable and the world walkable behind it.
+const gateBackground = () => ['.hud', '.bottom-hud', '#journey', '#map-badge', '#settings'].map(s => $(s));
+function closeStartGate() {
+  $('#start-gate').hidden = true; document.body.classList.remove('gate-open');
+  for (const element of gateBackground()) element.inert = false;
+  if (world) world.paused = !$('#settings').hidden;
+  world?.renderer.domElement.focus({ preventScroll: true });
+}
+if (touchDevice && !fullscreenElement() && !matchMedia('(display-mode: fullscreen)').matches && !matchMedia('(display-mode: standalone)').matches && !params.has('nogate')) {
   $('#start-gate').hidden = false; document.body.classList.add('gate-open');
+  for (const element of gateBackground()) element.inert = true;
+  $('#start-button').focus({ preventScroll: true });
 }
 // Fullscreen requires a user gesture, so the first tap both starts the walk and goes fullscreen.
 $('#start-button').addEventListener('click', async () => { closeStartGate(); if (!fullscreenElement()) await toggleFullscreen(); else await lockLandscape(); });
@@ -182,7 +231,6 @@ $('#start-windowed').addEventListener('click', closeStartGate);
 $('#fullscreen').addEventListener('click', toggleFullscreen);
 $('#leave-fullscreen').addEventListener('click', toggleFullscreen);
 for (const event of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(event, syncFullscreen);
-window.addEventListener('resize', updateResolution);
 function setZen(value) {
   setPanel(false); document.body.classList.toggle('zen', value); $('#show-ui').hidden = !value;
   $('.hud').inert = value; $('.bottom-hud').inert = value;
@@ -193,9 +241,15 @@ function setZen(value) {
 $('#hide-ui').addEventListener('click', () => setZen(true));
 $('#show-ui').addEventListener('click', () => setZen(false));
 window.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    if (document.body.classList.contains('fullscreen-fallback')) { document.body.classList.remove('fullscreen-fallback'); syncFullscreen(); } if (!$('#settings').hidden) setPanel(false, true); if (document.body.classList.contains('zen')) setZen(false); }
-  if (e.code === 'KeyF' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing && !e.target.isContentEditable && !e.target.closest?.('input,select,textarea,button,a')) {
+  // Escape used to close the panel, leave zen mode and leave wide mode all at once;
+  // it now undoes only the top-most layer.
+  if (e.key === 'Escape' && !e.isComposing) {
+    if (!$('#settings').hidden) setPanel(false, true);
+    else if (document.body.classList.contains('zen')) setZen(false);
+    else if (document.body.classList.contains('fullscreen-fallback')) { document.body.classList.remove('fullscreen-fallback'); syncFullscreen(); }
+  }
+  if (!$('#start-gate').hidden) return;
+  if (e.code === 'KeyF' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.isComposing && !e.target.isContentEditable && !e.target.closest?.('input,select,textarea,button,a')) {
     e.preventDefault(); toggleFullscreen();
   }
 });
@@ -208,7 +262,10 @@ function updateJoystick(e) {
   let x = e.clientX - r.left - r.width / 2, y = e.clientY - r.top - r.height / 2;
   const len = Math.hypot(x, y); if (len > max) { x = x / len * max; y = y / len * max; }
   thumb.style.transform = `translate(${x}px,${y}px)`;
-  world.transition = null; world.joy.x = x / max; world.joy.y = y / max;
+  // A tiny dead zone keeps a resting thumb from cancelling a teleport or creeping forward.
+  const dead = Math.hypot(x, y) < max * .08;
+  if (!dead) world.transition = null;
+  world.joy.x = dead ? 0 : x / max; world.joy.y = dead ? 0 : y / max;
 }
 joystick.addEventListener('pointerdown', e => { if (joyPointer !== null || !world || world.paused || e.button !== 0) return; e.preventDefault(); joyPointer = e.pointerId; joystick.setPointerCapture(e.pointerId); updateJoystick(e); });
 joystick.addEventListener('pointermove', e => { if (e.pointerId === joyPointer) updateJoystick(e); });
@@ -272,7 +329,7 @@ if (isPlains) {
 }
 $('#viewpoint').replaceChildren(...activeSpots.map((spot, index) => new Option(spot.name, index)));
 function updateResolution() {
-  if (world) requestAnimationFrame(() => { $('#render-resolution').textContent = world.renderResolution; });
+  if (world?.renderResolution) $('#render-resolution').textContent = world.renderResolution;
 }
 function setTravelMode(value) {
   settings.travelMode = value === 'cycle' ? 'cycle' : 'walk';
@@ -285,12 +342,24 @@ function setTravelMode(value) {
 $('#travel-mode').addEventListener('change', e => setTravelMode(e.target.value));
 $('#travel-toggle').addEventListener('click', () => { setTravelMode(settings.travelMode === 'cycle' ? 'walk' : 'cycle'); world?.renderer.domElement.focus({ preventScroll: true }); });
 setTravelMode(settings.travelMode);
-$('#save-view').addEventListener('click', () => {
-  if (!world?.ready) { toast('風景の準備ができるまでお待ちください。'); return; }
+let saving = false;
+$('#save-view').addEventListener('click', async () => {
+  if (!world?.ready || world.contextLost) { toast('風景の準備ができるまでお待ちください。'); return; }
+  if (saving) return;
+  saving = true;
   try {
-    const link = document.createElement('a'); link.download = `${mapId}_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
-    link.href = world.screenshot(); document.body.append(link); link.click(); link.remove(); toast(`${world.renderResolution} の風景を保存しました。`);
+    // A 4K PNG as a data: URL is 20-40 MB of base64 on the main thread and exceeds some
+    // browsers' URL limits. A Blob URL is cheap; toBlob copies the bitmap synchronously.
+    const resolution = world.renderResolution;
+    const blob = await world.screenshotBlob();
+    if (!blob) throw new Error('empty capture');
+    const url = URL.createObjectURL(blob), link = document.createElement('a');
+    link.download = `${mapId}_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+    link.href = url; document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    toast(`${resolution} の風景を保存しました。`);
   } catch { toast('風景を保存できませんでした。ブラウザのダウンロード設定をご確認ください。'); }
+  finally { saving = false; }
 });
 
 const discovered = new Set(settings.plainsDiscovered);
@@ -318,12 +387,16 @@ for (const [x, z] of [[-225,-178],[-190,-177],[169,8],[214,6],[39,-285]]) {
   const [px, py] = mapPoint(x, z); mapContext.fillStyle = '#f5ece0'; mapContext.fillRect(px - 3, py - 2, 6, 4);
 }
 mapContext.fillStyle = '#f4efda'; mapContext.font = '16px sans-serif'; mapContext.fillText('N', 331, 28);
+const spotButtons = [];
 for (const [index, spot] of plainsSpots.entries()) {
   const button = document.createElement('button'); button.textContent = index + 1; button.title = spot.name;
   button.setAttribute('aria-label', `${index + 1}. ${spot.name}へ移動`); button.dataset.spot = index;
   button.addEventListener('click', () => { if (!world) return; world.goTo(index, true); world.renderer.domElement.focus({ preventScroll: true }); });
-  $('#map-spots').append(button);
+  $('#map-spots').append(button); spotButtons.push(button);
 }
+// Only touch the DOM when a value really changes: this runs every frame while looking around.
+const setText = (element, text) => { if (element.textContent !== text) element.textContent = text; };
+let lastJourney = '';
 function updateJourney() {
   if (!isPlains || !world) return;
   const pos = world.camera.position;
@@ -336,13 +409,17 @@ function updateJourney() {
       if (i !== 0) toast(`散策スポットを発見：${spot.name}`);
     }
   });
-  $('#nearby-spot').textContent = `${plainsSpots[nearest].name} · ${Math.round(distance)} m`;
-  $('#discovery-count').textContent = `${discovered.size} / 6`;
-  $('#map-spots').querySelectorAll('button').forEach((button, i) => {
+  setText($('#nearby-spot'), `${plainsSpots[nearest].name} · ${Math.round(distance)} m`);
+  setText($('#discovery-count'), `${discovered.size} / ${plainsSpots.length}`);
+  spotButtons.forEach((button, i) => {
     button.classList.toggle('discovered', discovered.has(i));
     if (i === nearest) button.setAttribute('aria-current', 'location'); else button.removeAttribute('aria-current');
   });
-  if ($('#minimap-content').hidden) return;
+  if ($('#minimap-content').hidden) { lastJourney = ''; return; }
+  // Skip redrawing the canvas when neither the position nor heading visibly changed.
+  const key = `${Math.round(pos.x * 2)},${Math.round(pos.z * 2)},${Math.round(world.yaw * 60)},${discovered.size}`;
+  if (key === lastJourney) return;
+  lastJourney = key;
   miniContext.drawImage(mapBackground, 0, 0);
   plainsSpots.forEach((spot, i) => {
     const [x, y] = mapPoint(spot.position[0], spot.position[2]);
@@ -361,11 +438,25 @@ $('#minimap-toggle').addEventListener('click', () => toggleMinimap($('#minimap-c
 toggleMinimap(!matchMedia('(max-width: 760px), (max-height: 550px)').matches);
 
 const compassLabels = document.querySelectorAll('.compass > span:not(.compass-tick)');
+function showFatal(error) {
+  console.error('Countryside failed:', error);
+  // A half-built world kept rendering (and holding the GPU) behind the error message.
+  try { world?.renderer.setAnimationLoop(null); world?.renderer.dispose(); } catch { /* already broken */ }
+  world = null;
+  document.body.classList.remove('ready');
+  // The loading overlay fades via .ready; the error must be visible and on top again.
+  $('#loading').hidden = false; $('#loading').style.opacity = '1'; $('#loading').style.pointerEvents = 'auto';
+  $('#loading').innerHTML = '<span>3Dの風景を表示できませんでした。</span><span style="font-size:11px;max-width:280px;text-align:center;line-height:2">WebGL 2 対応の最新版 Chrome / Safari でお試しください。</span><button id="retry" class="reset-button" style="width:auto;padding:10px 22px;color:#51664e">もう一度読み込む</button>';
+  $('#retry').addEventListener('click', () => location.reload());
+  $('#retry').focus();
+}
+let lastHeading = -1;
 requestAnimationFrame(() => setTimeout(() => {
   try {
     world = new Countryside($('#world'), {
       onReady: () => { document.body.classList.add('ready'); $('#world').dataset.ready = 'true'; },
       onError: message => toast(message),
+      onFatal: error => showFatal(error),
       onSpot: index => { $('#viewpoint').value = String(index); toast(activeSpots[index].subtitle); },
       onResolution: () => updateResolution(),
       onContextRestored: quality => { settings.quality = quality; $('#quality').value = quality; persist(); updateResolution(); },
@@ -374,15 +465,17 @@ requestAnimationFrame(() => setTimeout(() => {
         const yaw = ((world.yaw * 180 / Math.PI) % 360 + 360) % 360;
         const directions = ['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'];
         const heading = Math.round(yaw / 45) % 8;
-        const labels = compassLabels;
-        labels[0].textContent = directions[(heading + 2) % 8];
-        labels[1].textContent = directions[heading];
-        labels[2].textContent = directions[(heading + 6) % 8];
+        if (heading !== lastHeading) {
+          lastHeading = heading;
+          compassLabels[0].textContent = directions[(heading + 2) % 8];
+          compassLabels[1].textContent = directions[heading];
+          compassLabels[2].textContent = directions[(heading + 6) % 8];
+        }
         updateJourney();
       },
     }, mapId);
     world.walking = true; world.sensitivity = settings.sensitivity; world.travelMode = settings.travelMode;
-    world.paused = !$('#settings').hidden;
+    world.paused = !$('#settings').hidden || !$('#start-gate').hidden;
     $('#time-of-day').value = settings.time;
     applyTime(settings.time);
     const actual=world.setQuality(settings.quality);
@@ -391,12 +484,9 @@ requestAnimationFrame(() => setTimeout(() => {
     updateResolution(); updateJourney(); persist();
     if (import.meta.env.DEV) window.__satoyama = world;
   } catch (error) {
-    console.error('Countryside initialization failed:', error);
-    // A half-built world kept rendering (and holding the GPU) behind the error message.
-    try { world?.renderer.setAnimationLoop(null); world?.renderer.dispose(); } catch { /* already broken */ }
-    world = null;
-    document.body.classList.remove('ready');
-    $('#loading').innerHTML = '<span>3Dの風景を表示できませんでした。</span><span style="font-size:11px;max-width:280px;text-align:center;line-height:2">WebGL 2 対応の最新版 Chrome / Safari でお試しください。</span><button id="retry" class="reset-button" style="width:auto;padding:10px 22px;color:#51664e">もう一度読み込む</button>';
-    $('#retry').addEventListener('click', () => location.reload());
+    // The Countryside constructor throws before `world` is assigned, so the half-built
+    // renderer's canvas (and its animation loop) is reachable only through the container.
+    if (!world) $('#world').querySelector('canvas')?.remove();
+    showFatal(error);
   }
 }, 80));

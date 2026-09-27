@@ -78,7 +78,9 @@ try {
   await check('11 focusing controls clears held movement', () => {
     const w = window.__satoyama; w.renderer.domElement.focus();
     w.renderer.domElement.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
-    document.querySelector('#sound').focus(); const ok = !w.keys.size; w.resetInput(); return ok;
+    // Buttons intentionally keep WASD working (B1); form fields that use the keys take over.
+    document.querySelector('#settings').hidden = false; document.querySelector('#volume').focus();
+    const ok = !w.keys.size; document.querySelector('#settings').hidden = true; w.resetInput(); return ok;
   });
   await check('12 zen mode still permits keyboard walking', () => {
     const w = window.__satoyama; document.querySelector('#hide-ui').click();
@@ -168,7 +170,7 @@ try {
     const p = await browser.newPage(); const failures = [];
     p.on('pageerror', e => failures.push(e.message));
     await p.route('https://fonts.googleapis.com/**', r => r.fulfill({ body: '', contentType: 'text/css' }));
-    await p.route('**/src/scene.js', r => r.fulfill({ contentType: 'application/javascript', body: `export class Countryside { constructor(c, cb) { this.renderer={domElement:document.createElement('canvas')}; this.joy={}; c.append(this.renderer.domElement); queueMicrotask(cb.onReady); } setQuality(q){return q;} resetInput(){} }` }));
+    await p.route('**/src/scene.js', r => r.fulfill({ contentType: 'application/javascript', body: `export const spots = [{ name: 'a', subtitle: 'a', position: [0, 0, 0], look: [0, 0, -1] }]; export class Countryside { constructor(c, cb) { this.renderer={domElement:document.createElement('canvas')}; this.joy={}; c.append(this.renderer.domElement); queueMicrotask(cb.onReady); } setQuality(q){return q;} setTime(){} resetInput(){} }` }));
     await p.addInitScript(() => localStorage.setItem('satoyama-immersive', 'null'));
     try { await p.goto(url); await p.waitForTimeout(600); assert.deepEqual(failures, []); assert.equal(await p.locator('#world').getAttribute('data-ready'), 'true'); }
     finally { await p.close(); }
