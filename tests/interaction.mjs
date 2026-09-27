@@ -19,7 +19,8 @@ try {
       v.render = () => { const t = performance.now(); if (t - last > 400) { last = t; render(); } };
     } });
   });
-  await page.goto('http://localhost:3000/', { waitUntil: 'domcontentloaded' });
+  // The checks use the original map's houses and train; the touch start gate is covered by mobile-smoke.
+  await page.goto(process.env.TEST_URL || 'http://localhost:3000/?map=satoyama&nogate', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.body.classList.contains('ready'));
   const pos = () => page.evaluate(() => window.__satoyama.camera.position.toArray());
   const settle = () => page.evaluate(() => { const w = window.__satoyama; w.transition = null; });
@@ -38,8 +39,8 @@ try {
     assert.equal(await page.evaluate(() => window.__satoyama.keys.size), 0);
   });
   await check('compass side labels follow heading', async () => {
-    await page.evaluate(() => { window.__satoyama.yaw = Math.PI; });
-    await page.waitForTimeout(600);
+    // Explicit update: SwiftShader frames can be further apart than any fixed wait.
+    await page.evaluate(() => { const w = window.__satoyama; w.yaw = Math.PI; w.callbacks.onPosition(w.camera.position); });
     const labels = await page.$$eval('.compass > span:not(.compass-tick)', els => els.map(e => e.textContent));
     assert.deepEqual(labels, ['E', 'S', 'W']);
     await page.evaluate(() => { window.__satoyama.yaw = 0; });
@@ -80,7 +81,9 @@ try {
     await page.evaluate(() => { const w = window.__satoyama; w.transition = null; w.camera.position.set(-26, 6, -64); });
     const a = await pos();
     await page.focus('canvas');
-    await page.keyboard.down('KeyS'); await page.waitForTimeout(1500); await page.keyboard.up('KeyS');
+    await page.keyboard.down('KeyS');
+    await page.evaluate(() => { const w = window.__satoyama, d = w.clock.getDelta; w.clock.getDelta = () => .05; try { for (let i = 0; i < 20; i++) w.tick(); } finally { w.clock.getDelta = d; } });
+    await page.keyboard.up('KeyS');
     const b = await pos();
     assert.ok(Math.hypot(a[0] - b[0], a[2] - b[2]) > .3);
   });

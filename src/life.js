@@ -70,11 +70,13 @@ export class VillageLife{
   pos.z=THREE.MathUtils.damp(pos.z,target,8,dt);
   pos.y=Math.max(pos.y,surfaceHeight(pos.x,pos.z)+1.7);
  }
- update(dt){this.time+=dt;this.trainX+=dt*this.speed;if(this.trainX>249)this.trainX=-230;for(const car of this.cars){const x=this.trainX-car.offset;car.group.position.set(x,railHeight(x)+.12,railZ(x));car.group.rotation.y=-Math.atan(.00144*x);car.wheels.forEach(w=>w.rotation.y-=dt*this.speed/.38);}this.warning=this.trainX+8>this.cx-55&&this.trainX-24<this.cx+17;this.gateAngle=THREE.MathUtils.lerp(this.gateAngle,this.warning?0:Math.PI/2,Math.min(1,dt*.95));this.gates.forEach(g=>g.rotation.z=-g.userData.side*this.gateAngle);this.lights.forEach(l=>l.lamp.material.emissiveIntensity=this.warning&&Math.floor(this.time*2.6)%2===l.phase?2.7:0);
+ update(dt){this.time+=dt;this.trainX+=dt*this.speed;
+  // Wrap only once the LAST car has left the rails; the rear car used to vanish mid-track.
+  const tail=this.cars.at(-1)?.offset??0;if(this.trainX-tail>249)this.trainX=-249;for(const car of this.cars){const x=this.trainX-car.offset;car.group.position.set(x,railHeight(x)+.12,railZ(x));car.group.rotation.y=-Math.atan(.00144*x);car.wheels.forEach(w=>w.rotation.y=(w.rotation.y-dt*this.speed/.38)%(Math.PI*2));}this.warning=this.trainX+8>this.cx-55&&this.trainX-24<this.cx+17;this.gateAngle=THREE.MathUtils.lerp(this.gateAngle,this.warning?0:Math.PI/2,Math.min(1,dt*.95));this.gates.forEach(g=>g.rotation.z=-g.userData.side*this.gateAngle);this.lights.forEach(l=>l.lamp.material.emissiveIntensity=this.warning&&Math.floor(this.time*2.6)%2===l.phase?2.7:0);
   for(const n of this.npcs){
    let next=n.distance+dt*n.speed*n.direction;
    if(next>n.length||next<0){n.direction*=-1;next=clamp(next,0,n.length);}
-   const p=n.curve.getPointAt(clamp(next/n.length,0,1));
+   const p=n.curve.getPointAt(clamp(next/n.length,0,1),this.tmpP??=new THREE.Vector3());
    // A pedestrian already on the crossing must exit, not freeze on the rails.
    // Previously only z was compared, so anyone in that z band anywhere on the map
    // counted as "on the crossing" and ignored the warning.
@@ -88,9 +90,13 @@ export class VillageLife{
    n.waiting=(this.warning&&!onCrossing&&Math.abs(p.x-this.cx)<3.4&&Math.abs(p.z-this.cz)<5.4)
      ||trainClose||crowded||Math.hypot(p.x-this.world.camera.position.x,p.z-this.world.camera.position.z)<1.1
      ||this.world.colliders.some(c=>colliderContains(c,p.x,p.z,.28));
+   // Two villagers meeting head-on (path/road junction) each waited for the other forever.
+   // After a short pause the one that yields turns back.
+   n.crowdWait=crowded?(n.crowdWait??0)+dt:0;
+   if(n.crowdWait>1.6){n.direction*=-1;n.crowdWait=0;}
    if(!n.waiting){n.distance=next;n.phase+=dt*n.speed*7;}
    n.gait=THREE.MathUtils.damp(n.gait,n.waiting?0:1,12,dt);
-   const pos=n.curve.getPointAt(n.distance/n.length),t=n.curve.getTangentAt(n.distance/n.length).multiplyScalar(n.direction);
+   const u=clamp(n.distance/n.length,0,1),pos=n.curve.getPointAt(u,this.tmpPos??=new THREE.Vector3()),t=n.curve.getTangentAt(u,this.tmpT??=new THREE.Vector3()).multiplyScalar(n.direction);
    n.root.position.set(pos.x,surfaceHeight(pos.x,pos.z),pos.z);n.root.rotation.y=Math.atan2(t.x,t.z);
    const swing=Math.sin(n.phase)*.32*n.gait;
    for(const l of n.limbs){l.leg.rotation.x=swing*l.s;l.knee.rotation.x=Math.max(0,-swing*l.s)*.7;l.arm.rotation.x=-swing*l.s*.7;}
@@ -98,7 +104,7 @@ export class VillageLife{
    // This removes the fixed .25m offset and handles slopes and bent knees.
    n.root.updateMatrixWorld(true);
    let correction=-Infinity;
-   const sole=new THREE.Vector3();
+   const sole=this.sole??=new THREE.Vector3(); // Reused: no per-frame allocation per villager.
    for(const limb of n.limbs)for(const x of [-.07,.07])for(const z of [-.125,.125]){
      sole.set(x,-.045,z).applyMatrix4(limb.foot.matrixWorld);
      correction=Math.max(correction,surfaceHeight(sole.x,sole.z)-sole.y);

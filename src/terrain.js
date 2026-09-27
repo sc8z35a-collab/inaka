@@ -56,7 +56,9 @@ export function surfaceHeight(x,z) {
   let offset=0;
   const pathDistance=Math.abs(x-pathX(z)),roadDistance=Math.abs(z-roadZ(x));
   // Match both the height and finite footprint of the ribbons in buildPaths.
-  if(z>=-106&&z<=126){
+  // The footpath ribbon ends at the farmhouse doorstep (PATH_NORTH_END); the old -106 bound
+  // lifted walkers 24 cm above the bare ground north of it, into the village.
+  if(z>=PATH_NORTH_END&&z<=126){
     if(pathDistance<2.35)offset=Math.max(offset,.14);
     if(pathDistance<1.375)offset=Math.max(offset,.24);
   }

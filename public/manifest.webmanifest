@@ -8,5 +8,14 @@
   "orientation": "landscape",
   "background_color": "#1d3a2e",
   "theme_color": "#1d3a2e",
-  "lang": "ja"
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "id": "./"
 }

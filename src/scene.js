@@ -14,12 +14,6 @@ const rand = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4
 const range = (a, b) => a + rand() * (b - a);
 const clamp = THREE.MathUtils.clamp;
 const smooth = x => { x = clamp(x, 0, 1); return x * x * (3 - 2 * x); };
-function hash(x, y) { const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return n - Math.floor(n); }
-function noise(x, y) {
-  const ix = Math.floor(x), iy = Math.floor(y), u = smooth(x - ix), v = smooth(y - iy);
-  return THREE.MathUtils.lerp(THREE.MathUtils.lerp(hash(ix, iy), hash(ix + 1, iy), u), THREE.MathUtils.lerp(hash(ix, iy + 1), hash(ix + 1, iy + 1), u), v);
-}
-function fbm(x, y) { return noise(x, y) * .55 + noise(x * 2.03, y * 2.03) * .27 + noise(x * 4.07, y * 4.07) * .12 + noise(x * 8.11, y * 8.11) * .06; }
 export const spots = [
   { name: '水田を望む小径', subtitle: '水面に映る空と、稲を渡る風。', position: [13.45, groundHeight(13.45,18)+1.97, 18], look: [-12, 7, -65], map: [82, 94] },
   { name: '茅葺きの集落', subtitle: '懐かしい屋根の下に流れる、穏やかな時間。', position: [-4, surfaceHeight(-4,-29)+1.7, -29], look: [-21, 4.3, -58], map: [76, 49] },
@@ -480,9 +474,12 @@ export class Countryside {
     const spot=this.spots[index]; if (!spot) return;
     const target=new THREE.Vector3().fromArray(spot.position);
     if(walk)target.y=this.surfaceHeight(target.x,target.z)+1.7;
-    const dummy=new THREE.PerspectiveCamera();dummy.rotation.order='YXZ';dummy.position.copy(target);dummy.lookAt(...spot.look);
+    const dummy=this.aimDummy??=new THREE.Object3D();dummy.rotation.order='YXZ';dummy.position.copy(target);
+    // Object3D.lookAt points +z at the target; cameras look down -z. Use the camera convention.
+    dummy.up.set(0,1,0);const m=new THREE.Matrix4().lookAt(target,new THREE.Vector3(...spot.look),dummy.up);dummy.quaternion.setFromRotationMatrix(m);dummy.rotation.setFromQuaternion(dummy.quaternion,'YXZ');
     let endYaw=dummy.rotation.y;while(endYaw-this.yaw>Math.PI)endYaw-=Math.PI*2;while(endYaw-this.yaw<-Math.PI)endYaw+=Math.PI*2;
-    this.transition={start:this.camera.position.clone(),end:target,startYaw:this.yaw,endYaw,startPitch:this.pitch,endPitch:dummy.rotation.x,elapsed:0,duration:2};
+    // Spot directions outside the drag clamp made the view jump on the first drag afterwards.
+    this.transition={start:this.camera.position.clone(),end:target,startYaw:this.yaw,endYaw,startPitch:this.pitch,endPitch:clamp(dummy.rotation.x,-1.18,1.1),elapsed:0,duration:2};
     this.callbacks.onSpot?.(index);
   }
   setTime(value){
@@ -536,8 +533,10 @@ export class Countryside {
     const ratio = Math.min(requestedRatio, maxSize / w, maxSize / h, Math.sqrt(8294400 / (w * h)));
     this.renderer.setPixelRatio(ratio);
     this.camera.aspect=w/h;this.camera.updateProjectionMatrix();this.renderer.setSize(w,h);
-    this.renderResolution = `${this.renderer.domElement.width} × ${this.renderer.domElement.height}`;
+    const resolution = `${this.renderer.domElement.width} × ${this.renderer.domElement.height}`;
     this.lighting?.resize(w,h);
+    // Resizes driven by the ResizeObserver / DPR watcher never reached the settings readout.
+    if (resolution !== this.renderResolution) { this.renderResolution = resolution; this.callbacks.onResolution?.(resolution); }
   }
   render(){this.lighting.render();}
   // ULTRA on phones: keep ~60 fps by adjusting only the supersampling factor (4K -> native DPR).
@@ -551,9 +550,12 @@ export class Countryside {
     if(now-win.changed<3000)return;
     const current=this.supersample??1;
     const next=fps<50?Math.max(.55,current-.1):fps>58.5&&current<1?Math.min(1,current+.05):current;
-    if(next!==current){this.supersample=next;win.changed=now;this.resize();this.callbacks.onResolution?.(this.renderResolution);}
+    if(next!==current){this.supersample=next;win.changed=now;this.resize();}
   }
   screenshot(){this.render();return this.renderer.domElement.toDataURL('image/png');}
+  // toBlob snapshots the drawing buffer synchronously, so rendering first is enough even
+  // without preserveDrawingBuffer.
+  screenshotBlob(){this.render();return new Promise(resolve=>this.renderer.domElement.toBlob(resolve,'image/png'));}
   thumbnails(){
     const position=this.camera.position.clone(),rotation=this.camera.rotation.clone(),result=[];
     const ratio=this.renderer.getPixelRatio();
@@ -613,6 +615,9 @@ export class Countryside {
     }
     // Trains used to pass straight through a player standing on the rails.
     if(!this.transition)this.life.clearTrack?.(this.camera.position,dt);
+    // Unbounded yaw (hours of turning) loses float precision and breaks the shortest-turn
+    // computation in goTo(). Keep it in (-π, π] unless a transition is interpolating it.
+    if(!this.transition&&Math.abs(this.yaw)>Math.PI)this.yaw=THREE.MathUtils.euclideanModulo(this.yaw+Math.PI,Math.PI*2)-Math.PI;
     this.camera.rotation.set(this.pitch,this.yaw,0,'YXZ');
     if(animationDt > 0 || !this.ready)for(const bird of this.birds){const d=bird.userData,t=this.elapsed*.07+d.offset;bird.position.set(Math.sin(t)*d.radius,d.height+Math.sin(t*2)*2,-64+Math.cos(t)*d.radius*.5);bird.rotation.y=Math.atan2(Math.cos(t)*d.radius,-Math.sin(t)*d.radius*.5)+Math.PI;bird.children.forEach((w,i)=>w.rotation.z=Math.sin(this.elapsed*5+d.offset)*(i===0?1:-1)*.35);}
     this.clouds.forEach((c,i)=>{

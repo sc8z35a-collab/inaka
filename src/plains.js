@@ -105,14 +105,14 @@ function sign(world, x, z, title, subtitle, rotation = 0) {
   const face = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.3), new THREE.MeshStandardMaterial({ map: texture(c, world), roughness: .9 }));
   face.position.set(0, 2.1, .08); group.add(face);
   for (const dx of [-1.25, 1.25]) world.addBox(.12, 2.2, .12, dx, 1.1, 0, world.materials.wood, group);
-  world.colliders.push({ x, z, halfWidth: 1.9, halfDepth: .16, rotation });
+  world.colliders.push({ x, z, halfWidth: 1.9, halfDepth: .16, rotation, r: Math.hypot(1.9, .16) });
 }
 function bench(world, x, z, angle = 0) {
   const group = new THREE.Group(); group.position.set(x, plainsHeight(x, z), z); group.rotation.y = angle; world.scene.add(group);
   world.addBox(2.7, .15, .75, 0, .62, 0, world.materials.wood, group);
   world.addBox(2.7, .5, .1, 0, 1.1, -.34, world.materials.wood, group);
   for (const s of [-1, 1]) world.addBox(.14, .62, .65, s * 1.05, .31, 0, world.materials.darkWood, group);
-  world.colliders.push({ x, z, halfWidth: 1.4, halfDepth: .4, rotation: angle });
+  world.colliders.push({ x, z, halfWidth: 1.4, halfDepth: .4, rotation: angle, r: Math.hypot(1.4, .4) });
 }
 function buildGround(world) {
   const landMap = world.groundTexture("grass", 28);
@@ -279,28 +279,35 @@ function buildFarms(world) {
     world.addBox(12, .25, 8.2, x, y + 4.2, z, metal).rotation.z = .08;
     world.addBox(3, 3.2, .08, x, y + 1.6, z + 3.55, world.materials.darkWood);
     world.colliders.push({ x, z, halfWidth: 5.6, halfDepth: 3.6, rotation: 0 });
-    const silo = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 7, 20), metal); silo.position.set(x + 9, y + 3.5, z); silo.castShadow = true; world.scene.add(silo);
+    const silo = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 7, 20), metal); silo.position.set(x + 9, y + 3.5, z); silo.castShadow = silo.receiveShadow = true; world.scene.add(silo);
     const cap = new THREE.Mesh(new THREE.ConeGeometry(2.1, 1.6, 20), metal); cap.position.set(x + 9, y + 7.8, z); cap.castShadow = true; world.scene.add(cap);
     world.colliders.push({ x: x + 9, z, r: 2.1 });
   }
   // Tunnel greenhouses and visible ribs, placed inside the reserved farm plots.
+  const ribMaterial = new THREE.LineBasicMaterial({ color: 0x98a9a1 });
   const film = new THREE.MeshStandardMaterial({ color: 0xe1ece5, roughness: .38, metalness: .08, transparent: true, opacity: .64, side: THREE.DoubleSide, depthWrite: false });
   for (const x of [-198, -187, -176]) {
     const z = -155, y = plainsHeight(x, z);
     const g = new THREE.CylinderGeometry(3.5, 3.5, 16, 24, 1, true, -Math.PI / 2, Math.PI); g.rotateX(-Math.PI / 2);
     const roof = new THREE.Mesh(g, film); roof.position.set(x, y + .1, z); world.scene.add(roof);
-    for (let dz = -8; dz <= 8; dz += 2) {
-      const pts = []; for (let i = 0; i <= 24; i++) { const a = i / 24 * Math.PI; pts.push(new THREE.Vector3(x + Math.cos(a) * 3.52, y + .12 + Math.sin(a) * 3.52, z + dz)); }
-      world.scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x98a9a1 })));
+    // One LineSegments per greenhouse (was nine Lines, each with its own material/draw call).
+    const pts = [];
+    for (let dz = -8; dz <= 8; dz += 2) for (let i = 0; i < 24; i++) {
+      for (const k of [i, i + 1]) { const a = k / 24 * Math.PI; pts.push(new THREE.Vector3(x + Math.cos(a) * 3.52, y + .12 + Math.sin(a) * 3.52, z + dz)); }
     }
+    world.scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), ribMaterial));
     world.colliders.push({ x, z, halfWidth: 3.55, halfDepth: 8.1, rotation: 0 });
   }
   // Hay bales, small tractor, and a roadside produce stall reward exploring.
   const straw = new THREE.MeshStandardMaterial({ color: 0xc8ab61, map: world.materials.roof.map, roughness: 1 });
+  // One instanced draw instead of twelve meshes; the collider now covers the 1.5 m length.
+  const bales = new THREE.InstancedMesh(new THREE.CylinderGeometry(.95, .95, 1.5, 16), straw, 12), bd = new THREE.Object3D();
   for (let i = 0; i < 12; i++) {
     const x = -308 + (i % 4) * 6, z = -247 + Math.floor(i / 4) * 5;
-    const bale = new THREE.Mesh(new THREE.CylinderGeometry(.95, .95, 1.5, 16), straw); bale.rotation.z = Math.PI / 2; bale.position.set(x, plainsHeight(x, z) + .95, z); bale.castShadow = true; world.scene.add(bale); world.colliders.push({ x, z, r: 1 });
+    bd.position.set(x, plainsHeight(x, z) + .95, z); bd.rotation.set(0, 0, Math.PI / 2); bd.updateMatrix(); bales.setMatrixAt(i, bd.matrix);
+    world.colliders.push({ x, z, halfWidth: .8, halfDepth: 1, rotation: 0, r: Math.hypot(.8, 1) });
   }
+  bales.castShadow = bales.receiveShadow = true; bales.computeBoundingSphere(); world.scene.add(bales);
   const tractor = new THREE.Group(), ty = plainsHeight(195, 18); tractor.position.set(195, ty, 18); world.scene.add(tractor);
   const green = new THREE.MeshStandardMaterial({ color: 0x44734b, roughness: .55 });
   world.addBox(1.45, .75, 2.7, 0, 1.2, 0, green, tractor); world.addBox(1.7, .12, 1.7, 0, 2.6, -.65, green, tractor);
@@ -318,9 +325,10 @@ function buildFarms(world) {
   world.addBox(3.7, .16, 2, x, y + 2.5, z, green).rotation.x = .1;
   world.colliders.push({ x, z, halfWidth: 1.9, halfDepth: 1, rotation: 0 });
   const produce = new THREE.MeshStandardMaterial({ color: 0xcaa83e, roughness: .8 });
-  for (let i = 0; i < 12; i++) {
-    const fruit = new THREE.Mesh(new THREE.SphereGeometry(.13, 10, 8), produce); fruit.position.set(x - 1.1 + (i % 6) * .4, y + 1.16, z - .25 + Math.floor(i / 6) * .5); world.scene.add(fruit);
-  }
+  // Twelve separate meshes (and geometries) collapsed into one instanced draw.
+  const fruit = new THREE.InstancedMesh(new THREE.SphereGeometry(.13, 10, 8), produce, 12), m = new THREE.Matrix4();
+  for (let i = 0; i < 12; i++) fruit.setMatrixAt(i, m.makeTranslation(x - 1.1 + (i % 6) * .4, y + 1.16, z - .25 + Math.floor(i / 6) * .5));
+  fruit.castShadow = true; fruit.computeBoundingSphere(); world.scene.add(fruit);
 }
 function buildLandmarks(world) {
   sign(world, 6, 314, 'はるか野の丘', 'PATCHWORK COUNTRYSIDE  /  696 × 696 m');
@@ -332,7 +340,9 @@ function buildLandmarks(world) {
   for (let x = -45; x <= 45; x += 3) {
     if (Math.abs(x) < 4) continue;
     const y = plainsHeight(x, 321); world.addBox(.12, 1.05, .12, x, y + .525, 321, world.materials.wood);
-    if (x < 45 && Math.abs(x + 1.5) > 4) for (const h of [.45, .88]) world.addBox(3, .08, .09, x + 1.5, plainsHeight(x + 1.5,321) + h, 321, world.materials.wood);
+    // The last post (x = 45) has no rail, but an invisible 3 m wall was still pushed beside it.
+    if (x >= 45 || Math.abs(x + 1.5) <= 4) continue;
+    for (const h of [.45, .88]) world.addBox(3, .08, .09, x + 1.5, plainsHeight(x + 1.5,321) + h, 321, world.materials.wood);
     world.colliders.push({ x: x + 1.5, z: 321, halfWidth: 1.5, halfDepth: .1, rotation: 0 });
   }
 }

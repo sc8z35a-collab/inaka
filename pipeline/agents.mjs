@@ -10,7 +10,7 @@
 // commits accepted work immediately (the sandbox may be reset at any time) and reverts failures.
 // Credentials are read from env / ~/.genspark_llm.yaml and never written to disk or logs.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -107,11 +107,13 @@ function runGates() {
 }
 
 // ---------- integration ----------
-function applyPatches(patches) {
+function applyPatches(patches, allowed) {
   const touched = new Map();
   for (const p of patches) {
     const path = join(root, p.file);
-    if (!p.file || p.file.includes('..') || !existsSync(path)) throw new Error(`invalid file ${p.file}`);
+    // Only the agent's own files may be patched (an agent could previously rewrite any file).
+    if (!p.file || p.file.includes('..') || !existsSync(path) || (allowed && !allowed.includes(p.file))) throw new Error(`invalid file ${p.file}`);
+    if (typeof p.search !== 'string' || !p.search || typeof p.replace !== 'string') throw new Error(`${p.file}: malformed patch`);
     const text = touched.get(path) ?? readFileSync(path, 'utf8');
     const count = text.split(p.search).length - 1;
     if (count !== 1) throw new Error(`${p.file}: search text matched ${count} times`);
@@ -120,7 +122,9 @@ function applyPatches(patches) {
   for (const [path, text] of touched) writeFileSync(path, text);
   return [...touched.keys()];
 }
-const commit = message => { sh('git add -A src index.html tests public pipeline'); try { sh(`git commit -q -m ${JSON.stringify(message)}`); return true; } catch { return false; } };
+// LLM-written summaries went through a shell inside double quotes, so `$(...)` or backticks
+// in a summary were executed. Pass the message as an argv entry instead.
+const commit = message => { sh('git add -A src index.html tests public pipeline'); try { execFileSync('git', ['commit', '-q', '-m', message], { cwd: root, stdio: 'pipe' }); return true; } catch { return false; } };
 
 async function runAgent(agent, goal) {
   const files = agent.files.filter(f => existsSync(join(root, f)))
@@ -154,14 +158,14 @@ async function main() {
         if (p.status === 'rejected') { entry.error = p.reason.message; report.agents.push(entry); continue; }
         Object.assign(entry, { summary: p.value.summary, findings: p.value.findings, patches: p.value.patches?.length || 0 });
         try {
-          const files = applyPatches(p.value.patches || []);
+          const files = applyPatches(Array.isArray(p.value.patches) ? p.value.patches : [], active[i].files);
           if (!files.length) { entry.result = 'no-op'; }
           else {
             const gates = runGates(); entry.gates = gates.results;
             if (gates.ok) { entry.result = commit(`feat(agent:${active[i].id}): ${String(p.value.summary).slice(0, 72)}`) ? 'committed' : 'unchanged'; }
-            else { sh(`git checkout -- ${files.map(f => JSON.stringify(f)).join(' ')}`); entry.result = 'reverted (gate failure)'; }
+            else { execFileSync('git', ['checkout', '--', ...files], { cwd: root, stdio: 'pipe' }); entry.result = 'reverted (gate failure)'; }
           }
-        } catch (e) { entry.result = `rejected: ${e.message}`; sh('git checkout -- src index.html tests'); }
+        } catch (e) { entry.result = `rejected: ${e.message}`; sh('git checkout -- src index.html tests pipeline public'); }
         report.agents.push(entry); console.log(entry.agent, entry.result);
       }
     }
@@ -172,4 +176,7 @@ async function main() {
   console.log('report:', file);
   if (report.gates && !report.gates.ok) process.exitCode = 1;
 }
-main().catch(e => { console.error(e); process.exitCode = 1; });
+// The module exports AGENTS; importing it used to launch a full pipeline run (LLM calls,
+// gates, commits) as a side effect. Run only when executed directly.
+import { pathToFileURL } from 'node:url';
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(e => { console.error(e); process.exitCode = 1; });
