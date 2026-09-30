@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { noise, smooth } from './terrain.js';
 import { foliageTexture, buildCumulus } from './nature.js';
+import { buildPlainsDetails } from './plains-details.js';
 
 // Metres, not scaled scenery: 696² / 232² = nine times the original walking area.
 export const plainsBounds = { minX: -348, maxX: 348, minZ: -348, maxZ: 348 };
@@ -348,7 +349,7 @@ function buildLandmarks(world) {
 }
 export function buildPlains(world) {
   seed = 518293;
-  buildGround(world); buildRoads(world); buildCrops(world); buildTrees(world); buildFarms(world); buildLandmarks(world);
+  buildGround(world); buildRoads(world); buildCrops(world); buildTrees(world); buildFarms(world); buildLandmarks(world); buildPlainsDetails(world);
   buildCumulus(world);
   // Clouds cover the whole horizon, not only the original valley's north face.
   for (let i = 0; i < 18; i++) {

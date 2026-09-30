@@ -78,7 +78,24 @@ export class HDRSuperLight {
     this.cascadeLights = [...this.csm.lights];
     // Only cascades illuminate the scene; do not multiply sunlight by five.
     world.sun.removeFromParent(); world.sun.target.removeFromParent();
-    world.scene.traverse(object => {
+    this.registerMaterials(world.scene);
+    if (this.supported) {
+      const target = new THREE.WebGLRenderTarget(1, 1, {
+        type: THREE.HalfFloatType, samples: Math.min(4, world.renderer.capabilities.maxSamples),
+      });
+      this.composer = new EffectComposer(world.renderer, target);
+      this.composer.addPass(new RenderPass(world.scene, world.camera));
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(1,1), .075, .35, 1.6);
+      this.composer.addPass(this.bloom);
+      this.composer.addPass(new OutputPass());
+    }
+    this.setQuality('hdr');
+  }
+  // Hooks cascaded shadows into every lit material below `root`. Also used for content that
+  // streams in after start-up (glTF props), which previously would have received no sunlight
+  // from the cascades at all (the plain DirectionalLight is removed from the scene).
+  registerMaterials(root) {
+    root.traverse(object => {
       for (const material of [object.material].flat().filter(Boolean)) {
         if (this.materials.has(material) || !(material.isMeshStandardMaterial || material.isMeshLambertMaterial || material.isMeshPhongMaterial)) continue;
         this.materials.add(material);
@@ -93,20 +110,15 @@ export class HDRSuperLight {
         };
         // Keep wind-deformed rice separate from static instanced materials.
         material.customProgramCacheKey = () => `super-light-v2-${material.type}-${originalCacheKey}`;
+        // Materials registered after setQuality() must pick up the current cascade defines.
+        if (this.csm.lights) {
+          material.defines.CSM_CASCADES = this.csm.cascades;
+          if (this.enabled) material.defines.HDR_SUPER_LIGHT = ''; else delete material.defines.HDR_SUPER_LIGHT;
+        }
         material.needsUpdate = true;
       }
     });
-    if (this.supported) {
-      const target = new THREE.WebGLRenderTarget(1, 1, {
-        type: THREE.HalfFloatType, samples: Math.min(4, world.renderer.capabilities.maxSamples),
-      });
-      this.composer = new EffectComposer(world.renderer, target);
-      this.composer.addPass(new RenderPass(world.scene, world.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(1,1), .075, .35, 1.6);
-      this.composer.addPass(this.bloom);
-      this.composer.addPass(new OutputPass());
-    }
-    this.setQuality('hdr');
+    this.world.renderer.shadowMap.needsUpdate = true;
   }
   setQuality(value) {
     this.low = value === 'low';

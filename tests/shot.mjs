@@ -17,7 +17,7 @@ try {
     let world; Object.defineProperty(window, '__satoyama', { configurable: true, get: () => world, set: v => { world = v; v.renderer.setAnimationLoop(null); } });
   }, process.env.QUALITY || 'low');
   await page.goto(process.env.URL || 'http://localhost:3000/', { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.__satoyama && window.__satoyama.materials.grass.map.image?.complete);
+  await page.waitForFunction(() => window.__satoyama && window.__satoyama.materials.grass.map.image?.complete && window.__assets && window.__assets.pending === 0);
   const data = await page.evaluate(async ({ spot, time, script }) => {
     const w = window.__satoyama;
     if (time) w.setTime(time);

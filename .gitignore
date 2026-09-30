@@ -3,3 +3,5 @@ dist/
 .npm/
 .artifacts/
 *.log
+.autosave.pause
+.autosave.pause
