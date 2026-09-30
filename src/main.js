@@ -482,7 +482,7 @@ requestAnimationFrame(() => setTimeout(() => {
     settings.quality=actual;
     $('#quality').value=settings.quality;
     updateResolution(); updateJourney(); persist();
-    if (import.meta.env.DEV) window.__satoyama = world;
+    if (import.meta.env.DEV || params.has("debug")) { window.__satoyama = world; import('./materials.js').then(m => { window.__assets = m.assetState; }); }
   } catch (error) {
     // The Countryside constructor throws before `world` is assigned, so the half-built
     // renderer's canvas (and its animation loop) is reachable only through the container.

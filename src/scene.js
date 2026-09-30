@@ -6,6 +6,9 @@ import { groundHeight, surfaceHeight, colliderContains, fields, fieldAt, railZ, 
 import { buildVegetation, buildCumulus } from './nature.js';
 import { VillageLife } from './life.js';
 import { buildPlains, plainsHeight, plainsSurface, plainsBounds, plainsSpots } from './plains.js';
+import { upgradeMaterials, applyWorldUV } from './materials.js';
+import { buildSatoyamaDetails } from './details.js';
+import { buildSatoyamaPlus } from './details-plus.js';
 export { groundHeight } from './terrain.js';
 
 // Procedural geometry, botanical atlases, and locally served photographic ground textures.
@@ -71,6 +74,9 @@ export class Countryside {
     this.materials = {};
     this.buildLights();
     this.buildTextures();
+    upgradeMaterials(this);
+    this.detailUpdaters = [];
+    this.timeHooks = [];
     if (this.isPlains) {
       buildPlains(this);
     } else {
@@ -81,6 +87,8 @@ export class Countryside {
       this.buildForest();
       this.buildRice();
       this.buildDetails();
+      buildSatoyamaDetails(this);
+      buildSatoyamaPlus(this);
       this.buildClouds();
       this.life = new VillageLife(this);
     }
@@ -395,7 +403,11 @@ export class Countryside {
       let g=mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
       if(g.index)g=g.toNonIndexed();
       g.deleteAttribute('normal');g.computeVertexNormals();
+      // Photographic materials tile in metres, independent of each box's size.
+      if(mesh.material.userData.worldUV)applyWorldUV(g,mesh.material.userData.worldUV);
       if(!g.attributes.uv)g.setAttribute('uv',new THREE.BufferAttribute(new Float32Array(g.attributes.position.count*2),2));
+      // mergeGeometries requires an identical attribute set on every part.
+      for(const name of Object.keys(g.attributes))if(!['position','normal','uv'].includes(name))g.deleteAttribute(name);
       groups.get(key).geometries.push(g);mesh.removeFromParent();mesh.geometry.dispose();
     }
     for(const {material,geometries} of groups.values()){
@@ -500,6 +512,7 @@ export class Countryside {
     this.scene.environment = environment.texture;
     this.environment?.dispose(); this.environment = environment; generator.dispose();
     this.clouds.forEach(c=>c.material.color.set(value==='evening'?0xffd0a1:0xffffff));
+    for (const hook of this.timeHooks) hook(value);
     this.renderer.shadowMap.needsUpdate = true;
   }
   setQuality(value){
@@ -575,7 +588,7 @@ export class Countryside {
     // OS reduced-motion changes apply live, without disabling intentional navigation.
     const animationDt = this.motionPreference.matches || this.paused ? 0 : dt;
     this.elapsed+=animationDt;
-    if(animationDt > 0)this.life.update(animationDt);
+    if(animationDt > 0){this.life.update(animationDt);for(const update of this.detailUpdaters)update(this.elapsed,animationDt);}
     this.navigationElapsed = (this.navigationElapsed ?? 0) + dt;
     this.updateLandscape?.();
     // Keep shader time small: float32 precision in GLSL makes wind jitter after hours.

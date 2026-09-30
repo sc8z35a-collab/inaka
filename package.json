@@ -11,7 +11,18 @@
     "agents:preflight": "node pipeline/agents.mjs --preflight",
     "agents:run": "node pipeline/agents.mjs --browser",
     "agents:gates": "node pipeline/agents.mjs --offline",
-    "test:mobile": "node tests/mobile-smoke.mjs"
+    "test:mobile": "node tests/mobile-smoke.mjs",
+    "predev": "bash scripts/ensure-autosave.sh",
+    "prebuild": "bash scripts/ensure-autosave.sh",
+    "prebuild:pages": "bash scripts/ensure-autosave.sh",
+    "pretest": "bash scripts/ensure-autosave.sh",
+    "autosave:ensure": "bash scripts/ensure-autosave.sh",
+    "autosave:status": "bash scripts/autosave-status.sh",
+    "autosave:now": "bash scripts/autosave.sh --once",
+    "restore": "bash scripts/restore.sh",
+    "test:colliders": "npx -y vite-node tests/colliders.mjs && npx -y vite-node tests/colliders-plains.mjs",
+    "assets:fetch": "bash scripts/fetch-polyhaven.sh",
+    "assets:stats": "node scripts/model-stats.mjs"
   },
   "dependencies": {
     "three": "^0.180.0",

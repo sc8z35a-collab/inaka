@@ -1,0 +1,31 @@
+<!doctype html>
+<html><body style="margin:0;background:#9fb3a0">
+<canvas id="c" width="1200" height="800"></canvas>
+<script type="module">
+// Dev-only preview grid of the CC0 glTF props (orientation / scale / material sanity check).
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+const names = ['wooden_bucket_01','wooden_bucket_02','wooden_crate_02','wooden_barrels_01','wooden_stool_01','wooden_lantern_01','wicker_basket_01','watering_can_metal_01','rusted_spade_01','planter_pot_clay','tree_stump_01','dead_tree_trunk','rock_moss_set_01','rock_07','stone_01','fern_02','weed_plant_02','dandelion_01','shrub_sorrel_01','shrub_04','nettle_plant','periwinkle_plant'];
+const renderer = new THREE.WebGLRenderer({ canvas: document.querySelector('#c'), antialias: true, preserveDrawingBuffer: true });
+renderer.setScissorTest(true);
+const scene = new THREE.Scene(); scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 1.4));
+const sun = new THREE.DirectionalLight(0xffffff, 2); sun.position.set(3, 5, 4); scene.add(sun);
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+const info = [];
+const cols = 6, cw = 200, ch = 200;
+for (const [i, name] of names.entries()) {
+  const gltf = await loader.loadAsync(`/models/${name}.glb`);
+  const root = gltf.scene; scene.add(root);
+  const box = new THREE.Box3().setFromObject(root), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  info.push(`${name}: ${size.toArray().map(v => v.toFixed(2)).join(' x ')}`);
+  const r = Math.max(size.x, size.y, size.z);
+  const cam = new THREE.PerspectiveCamera(35, 1, .01, 100);
+  cam.position.set(c.x + r * 1.4, c.y + r * .9, c.z + r * 1.8); cam.lookAt(c);
+  const x = (i % cols) * cw, y = 800 - (Math.floor(i / cols) + 1) * ch;
+  renderer.setViewport(x, y, cw, ch); renderer.setScissor(x, y, cw, ch);
+  renderer.setClearColor(0x9fb3a0); renderer.render(scene, cam);
+  scene.remove(root);
+}
+window.__info = info; document.title = 'done';
+</script></body></html>
